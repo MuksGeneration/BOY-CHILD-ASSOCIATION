@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#1B365D"/>
+  <!-- Decorative halo -->
+  <circle cx="256" cy="256" r="180" stroke="#005A9C" stroke-width="12" stroke-dasharray="8 8" opacity="0.6"/>
+  <!-- Protective Shield Foundation -->
+  <path d="M256 96 C336 96, 396 136, 396 230 C396 340, 256 416, 256 416 C256 416, 116 340, 116 230 C116 136, 176 96, 256 96 Z" fill="#005A9C" opacity="0.95"/>
+  <!-- Empowering Circle of Growth -->
+  <circle cx="256" cy="220" r="54" fill="#60C1E5"/>
+  <!-- Young Person Figure Silhouette -->
+  <circle cx="256" cy="185" r="22" fill="#1B365D"/>
+  <path d="M224 246 C224 228, 288 228, 288 246 L288 280 C288 286, 224 286, 224 280 Z" fill="#1B365D"/>
+  <!-- Protective Surrounding Hands / Wings -->
+  <path d="M168 260 C168 320, 220 358, 256 372 C292 358, 344 320, 344 260 C344 230, 310 200, 290 220 C270 240, 280 280, 256 295 C232 280, 242 240, 222 220 C202 200, 168 230, 168 260 Z" fill="#A0E0EF"/>
+</svg>

@@ -1,0 +1,32 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSafeFile() {
+      return request.resource.size <= 5 * 1024 * 1024
+        && (request.resource.contentType.matches('image/(jpeg|png|webp)') 
+            || request.resource.contentType == 'application/pdf');
+    }
+
+    // Safeguarding documents (consent forms, referee letters)
+    match /documents/{userId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || request.auth.token.role in ['coordinator', 'admin']);
+      allow write: if isSignedIn() && request.auth.uid == userId && isSafeFile();
+    }
+
+    // Private profile avatars: No photos of minors are publicly accessible
+    match /avatars/{userId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId && isSafeFile();
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

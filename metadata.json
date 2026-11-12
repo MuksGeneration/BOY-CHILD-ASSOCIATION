@@ -1,0 +1,6 @@
+{
+  "name": "Boy Child Association",
+  "description": "Empowering, uniting, guiding and safeguarding the boy child across Uganda through community mentorship circles, life skills and holistic wellbeing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

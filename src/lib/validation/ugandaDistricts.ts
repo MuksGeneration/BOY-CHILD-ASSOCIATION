@@ -1,0 +1,51 @@
+/**
+ * Comprehensive list of Ugandan Districts and key urban centres
+ * Used for address validation with fallback free-text input.
+ */
+export const UGANDA_DISTRICTS = [
+  'Kampala',
+  'Wakiso',
+  'Mukono',
+  'Jinja',
+  'Mbale',
+  'Gulu',
+  'Arua',
+  'Mbarara',
+  'Masaka',
+  'Fort Portal (Kabarole)',
+  'Lira',
+  'Soroti',
+  'Entebbe',
+  'Tororo',
+  'Kabale',
+  'Kasese',
+  'Hoima',
+  'Iganga',
+  'Busia',
+  'Kitgum',
+  'Mityana',
+  'Mubende',
+  'Luweero',
+  'Kayunga',
+  'Nebbi',
+  'Moroto',
+  'Kotido',
+  'Rukungiri',
+  'Ntungamo',
+  'Kisoro',
+  'Kyenjojo',
+  'Kamwenge',
+  'Kibaale',
+  'Bundibugyo',
+  'Kapchorwa',
+  'Sironko',
+  'Pallisa',
+  'Kumi',
+  'Apac',
+  'Adjumani',
+  'Moyo',
+  'Yumbe',
+  'Koboko'
+] as const;
+
+export type UgandaDistrict = (typeof UGANDA_DISTRICTS)[number] | string;
