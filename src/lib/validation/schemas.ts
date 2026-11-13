@@ -466,3 +466,175 @@ export const passwordResetSchema = z.object({
 });
 
 export type PasswordResetInput = z.infer<typeof passwordResetSchema>;
+
+/**
+ * Guardian Link Request & Verification Schemas
+ */
+export const requestGuardianLinkSchema = z.object({
+  boyIdentifier: z
+    .string()
+    .refine((val) => !hasHtmlOrScriptTags(val), { message: 'Invalid characters detected.' })
+    .transform((val) => sanitizeString(val))
+    .refine((val) => val.length >= 3, { message: 'Enter the child email or member ID.' }),
+  relationship: z.enum(['father', 'mother', 'legal_guardian', 'elder_sibling', 'extended_family', 'other']),
+  verificationMethod: z.enum(['child_code_confirmation', 'coordinator_id_check', 'guardian_sms_otp', 'school_patron_attestation']),
+  authorityEvidence: freeTextMessageSchema(4, 240)
+});
+
+export const verifyGuardianLinkSchema = z.object({
+  linkId: z.string().min(1),
+  verificationCode: z
+    .string()
+    .transform((v) => sanitizeString(v))
+    .refine((v) => /^BCA-\d{6}$/.test(v), { message: 'Enter valid 6-digit code in format BCA-XXXXXX.' })
+});
+
+export const submitGuardianConsentSchema = z.object({
+  boyId: z.string().min(1),
+  verificationMethod: z.enum(['child_code_confirmation', 'coordinator_id_check', 'guardian_sms_otp', 'school_patron_attestation']),
+  authorityEvidence: freeTextMessageSchema(5, 240),
+  authorityConfirmed: z.boolean().refine((v) => v === true, {
+    message: 'You must attest parental or legal guardian authority under Uganda Children Act (Cap 59).'
+  })
+});
+
+export const withdrawConsentSchema = z.object({
+  boyId: z.string().min(1),
+  reason: freeTextMessageSchema(5, 400)
+});
+
+/**
+ * Attendance Recording Schema
+ */
+export const recordAttendanceSchema = z.object({
+  sessionId: z.string().min(1),
+  circleId: z.string().min(1),
+  memberId: z.string().min(1),
+  memberName: fullNameSchema,
+  status: z.enum(['present', 'absent', 'excused']),
+  date: z.string().min(4)
+});
+
+/**
+ * Event Registration Schema
+ */
+export const eventRegistrationSchema = z.object({
+  eventId: z.string().min(1),
+  attendeeName: fullNameSchema,
+  attendeeEmail: optionalEmailSchema,
+  district: districtSchema
+});
+
+/**
+ * Newsletter Subscription Schema (Explicit Uganda DPPA 2019 Consent)
+ */
+export const newsletterSchema = z.object({
+  email: emailSchema,
+  district: districtSchema.optional(),
+  consentGiven: z.boolean().refine((v) => v === true, {
+    message: 'You must explicitly consent to receive updates from Boy Child Association Uganda.'
+  })
+});
+
+export type NewsletterInput = z.infer<typeof newsletterSchema>;
+
+/**
+ * Contact Message Schema
+ */
+export const contactMessageSchema = z.object({
+  fullName: fullNameSchema,
+  email: emailSchema,
+  phone: ugandanPhoneSchema,
+  subject: freeTextMessageSchema(4, 120),
+  message: freeTextMessageSchema(15, 1200)
+});
+
+export type ContactMessageInput = z.infer<typeof contactMessageSchema>;
+
+/**
+ * DPPA Data Protection Request Schema
+ */
+export const dppaRequestSchema = z.object({
+  type: z.enum(['export', 'correction', 'deletion']),
+  reason: freeTextMessageSchema(5, 300)
+});
+
+/**
+ * Safeguarding Case Triage & Follow-Up Schemas
+ */
+export const safeguardingTriageSchema = z.object({
+  status: z.enum(['new', 'unassigned', 'under_review', 'follow_up', 'escalated', 'resolved']),
+  triageNotes: freeTextMessageSchema(5, 2000),
+  assignedLeadName: z.string().transform((v) => sanitizeString(v)).optional(),
+  escalationChannel: z
+    .enum(['Sauti 116', 'Uganda Police CFPU (0800 199 699)', 'District Probation Officer'])
+    .optional(),
+  escalationRef: z.string().transform((v) => sanitizeString(v)).optional()
+});
+
+export const safeguardingFollowUpSchema = z.object({
+  caseId: z.string().min(1),
+  actionTaken: freeTextMessageSchema(8, 800),
+  outcome: freeTextMessageSchema(4, 500),
+  nextReviewDate: z.string().optional()
+});
+
+/**
+ * CMS Content Validation Schema
+ */
+export const cmsProgrammeSchema = z.object({
+  title: freeTextMessageSchema(4, 120),
+  category: z.enum(['Mentorship', 'Wellbeing', 'Skills', 'Clubs', 'Families']),
+  ageRange: freeTextMessageSchema(3, 40),
+  shortDescription: freeTextMessageSchema(10, 300),
+  status: z.enum(['draft', 'published', 'archived'])
+});
+
+export const cmsAnnouncementSchema = z.object({
+  title: freeTextMessageSchema(4, 140),
+  summary: freeTextMessageSchema(10, 600),
+  type: z.enum(['news', 'story', 'announcement']),
+  district: districtSchema,
+  status: z.enum(['draft', 'published', 'archived'])
+});
+
+export const mentorProgressReportSchema = z.object({
+  circleId: z.string().min(1, { message: 'Please select an assigned mentorship circle.' }),
+  reportingPeriod: freeTextMessageSchema(3, 60),
+  attendanceSummary: freeTextMessageSchema(8, 500),
+  keyMilestones: freeTextMessageSchema(10, 1000),
+  safeguardingObservations: freeTextMessageSchema(5, 800),
+  supportNeeded: z.string().transform((v) => sanitizeString(v)).optional()
+});
+
+export type MentorProgressReportInput = z.infer<typeof mentorProgressReportSchema>;
+
+/**
+ * Firebase Storage upload guards matching storage.rules
+ */
+export const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export const ALLOWED_DOCUMENT_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
+export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+
+export function validateImageFile(file: { type: string; size: number; name?: string }): { valid: boolean; error?: string } {
+  if (!(ALLOWED_IMAGE_MIME_TYPES as readonly string[]).includes(file.type)) {
+    return { valid: false, error: 'Profile photo must be a JPEG, PNG, or WebP image.' };
+  }
+  if (file.size <= 0 || file.size > MAX_AVATAR_BYTES) {
+    return { valid: false, error: 'Profile photo must be 5 MB or smaller.' };
+  }
+  return { valid: true };
+}
+
+export function validateDocumentFile(file: { type: string; size: number; name?: string }): { valid: boolean; error?: string } {
+  if (!(ALLOWED_DOCUMENT_MIME_TYPES as readonly string[]).includes(file.type)) {
+    return { valid: false, error: 'Document must be a PDF, JPEG, PNG, or WebP file.' };
+  }
+  if (file.size <= 0 || file.size > MAX_DOCUMENT_BYTES) {
+    return { valid: false, error: 'Document must be 10 MB or smaller.' };
+  }
+  return { valid: true };
+}
+
+

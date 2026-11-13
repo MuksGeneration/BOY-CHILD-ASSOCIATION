@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -9,10 +10,15 @@ import {
   joinMentorSchema,
   JoinMentorInput,
   joinPartnerSchema,
-  JoinPartnerInput
+  JoinPartnerInput,
+  normaliseUgandanPhone,
 } from '../../lib/validation/schemas';
 import { UGANDA_DISTRICTS } from '../../lib/validation/ugandaDistricts';
 import { useAuth } from '../../hooks/useAuth';
+import { firebaseService, isDemoModeEnabled } from '../../lib/firebase/firebase';
+import { mockStore } from '../../lib/firebase/mockStore';
+import { uploadApplicationDocument } from '../../lib/firebase/storage';
+import { validateDocumentFile } from '../../lib/validation/schemas';
 import {
   Users,
   ShieldAlert,
@@ -20,27 +26,30 @@ import {
   Building2,
   CheckCircle2,
   AlertCircle,
-  HelpCircle,
   Lock,
-  ArrowRight
+  ArrowRight,
+  Upload,
 } from 'lucide-react';
 
 type JoinRoleTab = 'boy' | 'guardian' | 'mentor' | 'partner';
 
 export const JoinPage: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState<JoinRoleTab>('boy');
-  const [successData, setSuccessData] = useState<{ role: JoinRoleTab; name: string; status: string } | null>(null);
-  const { signUp } = useAuth();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [successData, setSuccessData] = useState<{ role: JoinRoleTab; name: string; status: string; ageCategory?: string } | null>(null);
+  const [mentorDocFile, setMentorDocFile] = useState<File | null>(null);
+  const [partnerDocFile, setPartnerDocFile] = useState<File | null>(null);
+  const { user, isLiveFirebaseUser, switchPersona } = useAuth();
 
   // -------------------------------------------------------------
-  // Boy / Young Man Form
+  // Boy / Young Man Form (5-17 vs 18-35)
   // -------------------------------------------------------------
   const {
     register: registerBoy,
     handleSubmit: handleSubmitBoy,
     watch: watchBoy,
     setValue: setBoyValue,
-    formState: { errors: boyErrors, isSubmitting: isSubmittingBoy }
+    formState: { errors: boyErrors, isSubmitting: isSubmittingBoy },
   } = useForm<JoinBoyInput>({
     resolver: zodResolver(joinBoySchema),
     defaultValues: {
@@ -50,15 +59,13 @@ export const JoinPage: React.FC = () => {
       town: '',
       interests: ['Brothers in Purpose Mentorship'],
       guardianConsentGiven: false,
-      honeypot: ''
-    }
+      honeypot: '',
+    },
   });
 
-  const dobValue = watchBoy('dateOfBirth');
   const calculatedAge = watchBoy('calculatedAge') || 16;
   const isMinor = calculatedAge < 18;
 
-  // Derive age dynamically from Date of Birth
   const handleDobChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const dobStr = e.target.value;
     if (dobStr) {
@@ -69,38 +76,63 @@ export const JoinPage: React.FC = () => {
       if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
         age--;
       }
-      if (!isNaN(age) && age >= 5 && age <= 40) {
+      if (!isNaN(age) && age >= 5 && age <= 35) {
         setBoyValue('calculatedAge', age, { shouldValidate: true });
       }
     }
   };
 
   const onBoySubmit = async (data: JoinBoyInput) => {
-    // Client-side submit throttling prevention & honeypot check
     if (data.honeypot && data.honeypot.length > 0) return;
-
+    setSubmitError(null);
     try {
+      const ageCategory = data.calculatedAge < 18 ? 'child_5_17' : 'young_adult_18_35';
       const status = data.calculatedAge < 18 ? 'pending_guardian_consent' : 'active';
-      const fakeEmail = `${data.fullName.toLowerCase().replace(/[^a-z0-9]/g, '')}_${Date.now()}@boychild.demo`;
+      const applicantUid = user?.uid || `app_boy_${Date.now()}`;
 
-      await signUp(fakeEmail, 'TemporarySecurePass#2026', {
+      await firebaseService.submitMembershipApplication({
+        applicantUid,
         fullName: data.fullName,
-        role: 'boy',
-        status,
+        dateOfBirth: data.dateOfBirth,
+        calculatedAge: data.calculatedAge,
+        ageCategory,
         district: data.district,
         town: data.town,
-        calculatedAge: data.calculatedAge,
+        schoolOrOccupation: data.schoolOrOccupation,
+        interests: data.interests,
         guardianName: data.guardianName,
-        guardianPhone: data.guardianPhone
+        guardianPhone: data.guardianPhone ? normaliseUgandanPhone(data.guardianPhone).e164 : undefined,
       });
+
+      if (!user && isDemoModeEnabled) {
+        mockStore.addUser({
+          uid: applicantUid,
+          email: `${applicantUid}@pending.boychild.org`,
+          fullName: data.fullName,
+          role: 'boy',
+          status,
+          ageCategory,
+          district: data.district,
+          town: data.town,
+          calculatedAge: data.calculatedAge,
+          guardianName: data.guardianName,
+          guardianPhone: data.guardianPhone ? normaliseUgandanPhone(data.guardianPhone).e164 : undefined,
+          schoolOrOccupation: data.schoolOrOccupation,
+          interests: data.interests,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          createdBy: applicantUid,
+        });
+      }
 
       setSuccessData({
         role: 'boy',
         name: data.fullName,
-        status: status === 'pending_guardian_consent' ? 'pending_guardian_consent' : 'active'
+        status,
+        ageCategory: ageCategory === 'child_5_17' ? 'Child Cohort (Ages 5–17)' : 'Young Adult Cohort (Ages 18–35)',
       });
     } catch (err) {
-      console.error('Error joining as boy:', err);
+      setSubmitError(err instanceof Error ? err.message : 'Unable to submit boy registration.');
     }
   };
 
@@ -110,7 +142,7 @@ export const JoinPage: React.FC = () => {
   const {
     register: registerGuardian,
     handleSubmit: handleSubmitGuardian,
-    formState: { errors: guardianErrors, isSubmitting: isSubmittingGuardian }
+    formState: { errors: guardianErrors, isSubmitting: isSubmittingGuardian },
   } = useForm<JoinGuardianInput>({
     resolver: zodResolver(joinGuardianSchema),
     defaultValues: {
@@ -119,29 +151,52 @@ export const JoinPage: React.FC = () => {
       numberOfBoys: 1,
       relationship: 'mother',
       safeguardingAgreed: true,
-      honeypot: ''
-    }
+      honeypot: '',
+    },
   });
 
   const onGuardianSubmit = async (data: JoinGuardianInput) => {
     if (data.honeypot && data.honeypot.length > 0) return;
+    setSubmitError(null);
     try {
-      const fakeEmail = data.email || `guardian_${Date.now()}@boychild.demo`;
-      await signUp(fakeEmail, 'GuardianUgandaPass#2026', {
-        fullName: data.fullName,
-        phone: data.phone,
-        role: 'guardian',
-        status: 'active',
-        district: data.district
-      });
+      const uid = user?.uid || `usr_guardian_${Date.now()}`;
+      const normPhone = normaliseUgandanPhone(data.phone).e164;
+      if (user) {
+        await firebaseService.updateProfile(user.uid, {
+          fullName: data.fullName,
+          district: data.district,
+        });
+      } else if (isDemoModeEnabled) {
+        mockStore.addUser({
+          uid,
+          email: data.email || `${uid}@guardian.boychild.org`,
+          fullName: data.fullName,
+          phone: normPhone,
+          role: 'guardian',
+          status: 'active',
+          ageCategory: 'adult',
+          district: data.district,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          createdBy: uid,
+        });
+      } else {
+        await firebaseService.submitContactMessage({
+          fullName: data.fullName,
+          email: data.email || `${uid}@guardian.boychild.org`,
+          phone: normPhone,
+          subject: `Guardian Onboarding (${data.district})`,
+          message: `Guardian registration inquiry for ${data.numberOfBoys} boy(s), relationship: ${data.relationship}.`,
+        });
+      }
 
       setSuccessData({
         role: 'guardian',
         name: data.fullName,
-        status: 'active'
+        status: 'active',
       });
     } catch (err) {
-      console.error('Error joining as guardian:', err);
+      setSubmitError(err instanceof Error ? err.message : 'Unable to register guardian profile.');
     }
   };
 
@@ -152,7 +207,7 @@ export const JoinPage: React.FC = () => {
     register: registerMentor,
     handleSubmit: handleSubmitMentor,
     watch: watchMentor,
-    formState: { errors: mentorErrors, isSubmitting: isSubmittingMentor }
+    formState: { errors: mentorErrors, isSubmitting: isSubmittingMentor },
   } = useForm<JoinMentorInput>({
     resolver: zodResolver(joinMentorSchema),
     defaultValues: {
@@ -161,30 +216,48 @@ export const JoinPage: React.FC = () => {
       availability: 'weekends',
       safeguardingAgreed: true,
       hasCleanRecordConfirmed: true,
-      honeypot: ''
-    }
+      honeypot: '',
+    },
   });
 
   const mentorMotivation = watchMentor('motivation') || '';
 
   const onMentorSubmit = async (data: JoinMentorInput) => {
     if (data.honeypot && data.honeypot.length > 0) return;
+    setSubmitError(null);
     try {
-      await signUp(data.email, 'MentorSecurePass#2026', {
+      const appId = `app_mentor_${Date.now()}`;
+      const created = await firebaseService.submitMentorApplication({
+        applicantUid: user?.uid || appId,
         fullName: data.fullName,
-        phone: data.phone,
-        role: 'mentor',
-        status: 'pending_vetting',
-        district: data.district
+        email: data.email,
+        phone: normaliseUgandanPhone(data.phone).e164,
+        district: data.district,
+        occupation: data.occupation,
+        motivation: data.motivation,
+        availability: data.availability,
+        safeguardingTrainingAccepted: true,
+        referee1Name: data.referee1Name,
+        referee1Phone: normaliseUgandanPhone(data.referee1Phone).e164,
+        referee2Name: data.referee2Name,
+        referee2Phone: normaliseUgandanPhone(data.referee2Phone).e164,
       });
+      if (mentorDocFile && user) {
+        const check = validateDocumentFile(mentorDocFile);
+        if (!check.valid) {
+          throw new Error(check.error || 'Invalid mentor verification document.');
+        }
+        await uploadApplicationDocument('mentorApplications', created.id, mentorDocFile);
+      }
 
+      setMentorDocFile(null);
       setSuccessData({
         role: 'mentor',
         name: data.fullName,
-        status: 'pending_vetting'
+        status: 'pending_vetting',
       });
     } catch (err) {
-      console.error('Error joining as mentor:', err);
+      setSubmitError(err instanceof Error ? err.message : 'Unable to submit mentor application.');
     }
   };
 
@@ -195,7 +268,7 @@ export const JoinPage: React.FC = () => {
     register: registerPartner,
     handleSubmit: handleSubmitPartner,
     watch: watchPartner,
-    formState: { errors: partnerErrors, isSubmitting: isSubmittingPartner }
+    formState: { errors: partnerErrors, isSubmitting: isSubmittingPartner },
   } = useForm<JoinPartnerInput>({
     resolver: zodResolver(joinPartnerSchema),
     defaultValues: {
@@ -203,37 +276,50 @@ export const JoinPage: React.FC = () => {
       district: 'Kampala',
       orgType: 'school',
       safeguardingAgreed: true,
-      honeypot: ''
-    }
+      honeypot: '',
+    },
   });
 
   const proposalText = watchPartner('collaborationProposal') || '';
 
   const onPartnerSubmit = async (data: JoinPartnerInput) => {
     if (data.honeypot && data.honeypot.length > 0) return;
+    setSubmitError(null);
     try {
-      await signUp(data.email, 'PartnerSecurePass#2026', {
-        fullName: data.contactPerson,
-        phone: data.phone,
-        role: 'partner',
-        status: 'active',
-        district: data.district
+      const uid = user?.uid || `usr_partner_${Date.now()}`;
+      const created = await firebaseService.submitPartnerApplication({
+        applicantUid: uid,
+        orgName: data.orgName,
+        orgType: data.orgType,
+        contactPerson: data.contactPerson,
+        phone: normaliseUgandanPhone(data.phone).e164,
+        email: data.email,
+        district: data.district,
+        applicationType: data.orgType === 'school' ? 'vanguard_club' : 'institutional_partner',
+        proposal: data.collaborationProposal,
       });
+      if (partnerDocFile && user) {
+        const check = validateDocumentFile(partnerDocFile);
+        if (!check.valid) {
+          throw new Error(check.error || 'Invalid institutional verification document.');
+        }
+        await uploadApplicationDocument('partnerApplications', created.id, partnerDocFile);
+      }
 
+      setPartnerDocFile(null);
       setSuccessData({
         role: 'partner',
         name: data.orgName,
-        status: 'active'
+        status: 'pending',
       });
     } catch (err) {
-      console.error('Error submitting partner request:', err);
+      setSubmitError(err instanceof Error ? err.message : 'Unable to submit partnership proposal.');
     }
   };
 
   return (
     <div className="bg-[#F8FAFC] min-h-screen py-10 sm:py-14">
       <div className="max-w-4xl mx-auto px-4 sm:px-6">
-        {/* Title */}
         <div className="text-center max-w-2xl mx-auto mb-10">
           <span className="text-xs font-bold uppercase tracking-widest text-[#005A9C]">
             Get Involved
@@ -242,7 +328,7 @@ export const JoinPage: React.FC = () => {
             Join the Boy Child Movement
           </h1>
           <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-            Select your role below. Every participant goes through our safeguarding onboarding to protect boys and maintain positive standards.
+            Select your role below. Every participant goes through our safeguarding onboarding to protect boys (5–17) and empower young men (18–35).
           </p>
         </div>
 
@@ -253,11 +339,10 @@ export const JoinPage: React.FC = () => {
             onClick={() => {
               setSelectedRole('boy');
               setSuccessData(null);
+              setSubmitError(null);
             }}
             className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs font-bold transition-all min-h-[44px] ${
-              selectedRole === 'boy'
-                ? 'bg-white text-[#1B365D] shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+              selectedRole === 'boy' ? 'bg-white text-[#1B365D] shadow-sm' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Users className="w-4 h-4 text-[#005A9C]" />
@@ -269,11 +354,10 @@ export const JoinPage: React.FC = () => {
             onClick={() => {
               setSelectedRole('guardian');
               setSuccessData(null);
+              setSubmitError(null);
             }}
             className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs font-bold transition-all min-h-[44px] ${
-              selectedRole === 'guardian'
-                ? 'bg-white text-[#1B365D] shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+              selectedRole === 'guardian' ? 'bg-white text-[#1B365D] shadow-sm' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <ShieldAlert className="w-4 h-4 text-[#005A9C]" />
@@ -285,11 +369,10 @@ export const JoinPage: React.FC = () => {
             onClick={() => {
               setSelectedRole('mentor');
               setSuccessData(null);
+              setSubmitError(null);
             }}
             className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs font-bold transition-all min-h-[44px] ${
-              selectedRole === 'mentor'
-                ? 'bg-white text-[#1B365D] shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+              selectedRole === 'mentor' ? 'bg-white text-[#1B365D] shadow-sm' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <GraduationCap className="w-4 h-4 text-[#005A9C]" />
@@ -301,11 +384,10 @@ export const JoinPage: React.FC = () => {
             onClick={() => {
               setSelectedRole('partner');
               setSuccessData(null);
+              setSubmitError(null);
             }}
             className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs font-bold transition-all min-h-[44px] ${
-              selectedRole === 'partner'
-                ? 'bg-white text-[#1B365D] shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+              selectedRole === 'partner' ? 'bg-white text-[#1B365D] shadow-sm' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Building2 className="w-4 h-4 text-[#005A9C]" />
@@ -313,9 +395,15 @@ export const JoinPage: React.FC = () => {
           </button>
         </div>
 
+        {submitError && (
+          <div className="mb-6 p-4 bg-red-50 text-[#DC2626] rounded-2xl border border-red-200 text-xs font-semibold">
+            {submitError}
+          </div>
+        )}
+
         {/* Success Confirmation Card */}
         {successData && (
-          <div className="bg-white rounded-2xl p-8 border border-emerald-200 shadow-md mb-8 text-center animate-fade-in">
+          <div className="bg-white rounded-2xl p-8 border border-emerald-200 shadow-md mb-8 text-center">
             <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle2 className="w-8 h-8" />
             </div>
@@ -323,7 +411,8 @@ export const JoinPage: React.FC = () => {
               Registration Submitted Successfully
             </h2>
             <p className="mt-2 text-sm text-slate-600 max-w-lg mx-auto">
-              Welcome, <strong className="text-[#005A9C]">{successData.name}</strong>.
+              Thank you, <strong className="text-[#005A9C]">{successData.name}</strong>.
+              {successData.ageCategory && <span className="block text-xs font-semibold mt-1">{successData.ageCategory}</span>}
             </p>
 
             {successData.status === 'pending_guardian_consent' && (
@@ -332,20 +421,24 @@ export const JoinPage: React.FC = () => {
                   <AlertCircle className="w-4 h-4 text-amber-600" />
                   <span>Safeguarding Hold: Guardian Consent Required</span>
                 </div>
-                Because you are under 18 years old, an SMS consent verification has been queued for your parent or guardian. Your account will remain in <strong className="font-mono">pending_guardian_consent</strong> and cannot join circles or exchange messages until consent is confirmed.
+                Because you are under 18 years old, your application is held in <strong className="font-mono">pending_guardian_consent</strong> until a verified guardian submits formal safeguarding consent.
               </div>
             )}
 
             {successData.status === 'pending_vetting' && (
               <div className="mt-4 p-4 bg-purple-50 rounded-xl border border-purple-200 text-xs text-purple-900 max-w-lg mx-auto text-left">
-                <div className="font-bold text-purple-900 mb-1">
-                  Mentor Vetting in Progress
-                </div>
-                Thank you for offering your time. Our safeguarding lead will contact your two referees and verify criminal background clearance before circle matching.
+                <div className="font-bold text-purple-900 mb-1">Mentor Vetting in Progress</div>
+                Our safeguarding coordinator will verify both community referees and background clearance before circle assignment.
               </div>
             )}
 
-            {/* WhatsApp Community Invitation */}
+            {successData.role === 'partner' && (
+              <div className="mt-4 p-4 bg-cyan-50 rounded-xl border border-cyan-200 text-xs text-cyan-950 max-w-lg mx-auto text-left">
+                <div className="font-bold text-cyan-900 mb-1">Partner Review Queued</div>
+                Our partnerships team will verify your institution and review your School Vanguard Club or community collaboration proposal.
+              </div>
+            )}
+
             <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 max-w-lg mx-auto text-left">
               <div className="font-bold text-emerald-950 mb-1">
                 Join the Boys WhatsApp Brotherhood Group (0732320190)
@@ -363,14 +456,25 @@ export const JoinPage: React.FC = () => {
               </a>
             </div>
 
-            <div className="mt-6">
-              <a
-                href="/hub"
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <Link
+                to="/auth"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-300 text-[#1B365D] rounded-xl text-xs font-bold hover:bg-slate-50 min-h-[44px]"
+              >
+                <span>Create / Sign In to Account</span>
+              </Link>
+              <Link
+                to={successData.role === 'guardian' ? '/guardian' : successData.role === 'mentor' ? '/mentor' : successData.role === 'partner' ? '/partner' : '/hub'}
+                onClick={() => {
+                  if (isDemoModeEnabled && !isLiveFirebaseUser && successData.role === 'guardian') {
+                    switchPersona('usr_guardian_grace');
+                  }
+                }}
                 className="inline-flex items-center gap-2 px-6 py-2.5 bg-[#005A9C] text-white rounded-xl text-xs font-bold hover:bg-[#004980] min-h-[44px]"
               >
-                <span>Proceed to Member Hub</span>
+                <span>Open Dashboard</span>
                 <ArrowRight className="w-4 h-4" />
-              </a>
+              </Link>
             </div>
           </div>
         )}
@@ -906,6 +1010,33 @@ export const JoinPage: React.FC = () => {
                 )}
               </div>
 
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div>
+                  <span className="font-semibold text-[#1B365D] block">
+                    Optional Vetting Document (National ID / LC1 Letter — PDF or Image, max 10 MB)
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    {user
+                      ? mentorDocFile
+                        ? `Selected: ${mentorDocFile.name}`
+                        : 'Attaches securely to Firebase Storage for coordinator review.'
+                      : 'Sign in first if you want to attach verification documents directly.'}
+                  </span>
+                </div>
+                {user && (
+                  <label className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-300 rounded-xl font-bold text-[#1B365D] cursor-pointer shrink-0">
+                    <Upload className="w-3.5 h-3.5 text-[#005A9C]" />
+                    <span>{mentorDocFile ? 'Change File' : 'Attach File'}</span>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,image/webp"
+                      onChange={(e) => setMentorDocFile(e.target.files?.[0] || null)}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
               <div className="pt-4 border-t border-slate-100 flex items-center justify-end">
                 <button
                   type="submit"
@@ -1045,6 +1176,33 @@ export const JoinPage: React.FC = () => {
                 </label>
                 {partnerErrors.safeguardingAgreed && (
                   <p className="text-xs text-[#DC2626] mt-1">{partnerErrors.safeguardingAgreed.message}</p>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div>
+                  <span className="font-semibold text-[#1B365D] block">
+                    Optional Registration Certificate / School Charter (PDF or Image, max 10 MB)
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    {user
+                      ? partnerDocFile
+                        ? `Selected: ${partnerDocFile.name}`
+                        : 'Uploads directly to protected verification storage.'
+                      : 'Sign in first if you want to attach institutional verification files.'}
+                  </span>
+                </div>
+                {user && (
+                  <label className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-300 rounded-xl font-bold text-[#1B365D] cursor-pointer shrink-0">
+                    <Upload className="w-3.5 h-3.5 text-[#005A9C]" />
+                    <span>{partnerDocFile ? 'Change File' : 'Attach File'}</span>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,image/webp"
+                      onChange={(e) => setPartnerDocFile(e.target.files?.[0] || null)}
+                      className="hidden"
+                    />
+                  </label>
                 )}
               </div>
 

@@ -1,15 +1,23 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { AppUser, UserRole } from '../types';
 import { mockStore } from '../lib/firebase/mockStore';
-import { firebaseService } from '../lib/firebase/firebase';
+import { firebaseService, isDemoModeEnabled, normalizeDoc } from '../lib/firebase/firebase';
+import { auth, db, isFirebaseConfigured } from '../lib/firebase/config';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface AuthContextType {
   user: AppUser | null;
   role: UserRole;
   isUnder18Pending: boolean;
+  isSuspended: boolean;
+  isLiveFirebaseUser: boolean;
+  authReady: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signUp: (email: string, password: string, userData: Partial<AppUser>) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
   signOut: () => Promise<void>;
   switchPersona: (uid: string) => void;
   allDemoUsers: Record<string, AppUser>;
@@ -17,14 +25,82 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function buildFallbackLiveUser(fbUser: FirebaseUser, claimRole?: UserRole, claimCleared = false): AppUser {
+  const isBootstrapAdmin = fbUser.email === 'mukuladavid6@gmail.com' && fbUser.emailVerified;
+  const fallbackRole: UserRole = isBootstrapAdmin ? 'admin' : claimRole || 'boy';
+  return {
+    uid: fbUser.uid,
+    email: fbUser.email || '',
+    fullName: fbUser.displayName || 'BCA Member',
+    role: fallbackRole,
+    status: 'active',
+    safeguardingCleared: fallbackRole === 'admin' || claimCleared,
+    emailVerified: fbUser.emailVerified,
+    district: 'Kampala',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    createdBy: fbUser.uid,
+  };
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<AppUser>(() => mockStore.getCurrentUser());
+  const [user, setUser] = useState<AppUser | null>(() =>
+    isDemoModeEnabled ? mockStore.getCurrentUser() : null
+  );
+  const [isLiveFirebaseUser, setIsLiveFirebaseUser] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = mockStore.subscribe(() => {
-      setUser({ ...mockStore.getCurrentUser() });
+    firebaseService.testConnection().catch(() => undefined);
+
+    const unsubscribeStore = mockStore.subscribe(() => {
+      if (isDemoModeEnabled && !auth?.currentUser) {
+        setUser({ ...mockStore.getCurrentUser() });
+      }
     });
-    return unsubscribe;
+
+    let unsubscribeFb = () => {};
+    if (isFirebaseConfigured && auth && db) {
+      unsubscribeFb = onAuthStateChanged(auth, async (fbUser) => {
+        if (fbUser && db) {
+          const tokenResult = await fbUser.getIdTokenResult().catch(() => null);
+          const claimRole = tokenResult?.claims?.role as UserRole | undefined;
+          const claimCleared = Boolean(tokenResult?.claims?.safeguardingCleared);
+
+          try {
+            const snap = await getDoc(doc(db, 'users', fbUser.uid));
+            if (snap.exists()) {
+              const data = normalizeDoc<AppUser>(snap.id, snap.data());
+              const resolvedRole = claimRole || data.role;
+              setUser({
+                ...data,
+                uid: fbUser.uid,
+                role: resolvedRole,
+                safeguardingCleared: resolvedRole === 'admin' || claimCleared || data.safeguardingCleared,
+                emailVerified: fbUser.emailVerified,
+              });
+            } else {
+              setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared));
+            }
+          } catch (err) {
+            console.warn('Firestore user profile read fallback to token claims:', err);
+            setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared));
+          }
+          setIsLiveFirebaseUser(true);
+        } else {
+          setIsLiveFirebaseUser(false);
+          setUser(isDemoModeEnabled ? { ...mockStore.getCurrentUser() } : null);
+        }
+        setAuthReady(true);
+      });
+    } else {
+      setAuthReady(true);
+    }
+
+    return () => {
+      unsubscribeStore();
+      unsubscribeFb();
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {
@@ -42,20 +118,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser({ ...newUser });
   };
 
+  const resetPassword = async (email: string) => {
+    await firebaseService.resetPassword(email);
+  };
+
+  const resendVerificationEmail = async () => {
+    await firebaseService.resendVerificationEmail();
+  };
+
   const signOut = async () => {
     await firebaseService.signOut();
-    mockStore.switchUser('usr_boy_active');
-    setUser({ ...mockStore.getCurrentUser() });
+    setIsLiveFirebaseUser(false);
+    if (isDemoModeEnabled) {
+      mockStore.switchUser('usr_boy_active');
+      setUser({ ...mockStore.getCurrentUser() });
+    } else {
+      setUser(null);
+    }
   };
 
   const switchPersona = (uid: string) => {
+    if (!isDemoModeEnabled || isLiveFirebaseUser) return;
     mockStore.switchUser(uid);
     setUser({ ...mockStore.getCurrentUser() });
   };
 
-  const isUnder18Pending =
-    user?.role === 'boy' &&
-    user?.status === 'pending_guardian_consent';
+  const isUnder18Pending = user?.role === 'boy' && user?.status === 'pending_guardian_consent';
+  const isSuspended = user?.status === 'suspended';
 
   return (
     <AuthContext.Provider
@@ -63,12 +152,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         role: user?.role || 'boy',
         isUnder18Pending,
+        isSuspended,
+        isLiveFirebaseUser,
+        authReady,
         signIn,
         signInWithGoogle,
         signUp,
+        resetPassword,
+        resendVerificationEmail,
         signOut,
         switchPersona,
-        allDemoUsers: mockStore.users
+        allDemoUsers: mockStore.users,
       }}
     >
       {children}

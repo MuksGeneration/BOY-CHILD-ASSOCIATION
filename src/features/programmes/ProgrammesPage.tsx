@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { firebaseService } from '../../lib/firebase/firebase';
+import { useAuth } from '../../hooks/useAuth';
+import { usePublicCatalog } from '../../hooks/usePlatformData';
 import { Programme } from '../../types';
 import { UGANDA_DISTRICTS } from '../../lib/validation/ugandaDistricts';
 import { normaliseUgandanPhone } from '../../lib/validation/schemas';
@@ -9,14 +11,17 @@ import {
   Calendar,
   MapPin,
   CheckCircle2,
-  Users,
   X,
   Send,
-  Sparkles
+  Sparkles,
 } from 'lucide-react';
 
 export const ProgrammesPage: React.FC = () => {
+  const { user, role } = useAuth();
+  usePublicCatalog(role);
   const programmes = firebaseService.getProgrammes();
+  const cms = firebaseService.getCmsSettings();
+
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedDistrict, setSelectedDistrict] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,8 +31,10 @@ export const ProgrammesPage: React.FC = () => {
   const [applicantName, setApplicantName] = useState('');
   const [applicantPhone, setApplicantPhone] = useState('');
   const [applicantAge, setApplicantAge] = useState('');
+  const [applicantDistrict, setApplicantDistrict] = useState('Kampala');
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState(false);
 
   const categories = ['All', 'Mentorship', 'Wellbeing', 'Skills', 'Clubs', 'Families'];
@@ -46,7 +53,7 @@ export const ProgrammesPage: React.FC = () => {
     return matchesCat && matchesDistrict && matchesSearch;
   });
 
-  const handleRequestPlace = (e: React.FormEvent) => {
+  const handleRequestPlace = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
@@ -67,38 +74,55 @@ export const ProgrammesPage: React.FC = () => {
       return;
     }
 
-    // Success flow
-    setSuccessMessage(true);
-    setTimeout(() => {
-      setSuccessMessage(false);
-      setActiveModalProg(null);
-      setApplicantName('');
-      setApplicantPhone('');
-      setApplicantAge('');
-      setNotes('');
-    }, 2500);
+    setSubmitting(true);
+    try {
+      const dobYear = new Date().getFullYear() - ageNum;
+      await firebaseService.submitMembershipApplication({
+        applicantUid: user?.uid || `guest_${Date.now()}`,
+        fullName: applicantName.trim(),
+        dateOfBirth: `${dobYear}-01-01`,
+        calculatedAge: ageNum,
+        ageCategory: ageNum < 18 ? 'child_5_17' : 'young_adult_18_35',
+        district: applicantDistrict,
+        town: applicantDistrict,
+        schoolOrOccupation: activeModalProg?.title || 'Programme Place Request',
+        interests: [activeModalProg?.title || 'Mentorship', notes.trim()].filter(Boolean),
+        guardianPhone: ageNum < 18 ? phoneCheck.e164 : undefined,
+        guardianName: ageNum < 18 ? 'Guardian verification pending' : undefined,
+      });
+
+      setSuccessMessage(true);
+      setTimeout(() => {
+        setSuccessMessage(false);
+        setActiveModalProg(null);
+        setApplicantName('');
+        setApplicantPhone('');
+        setApplicantAge('');
+        setNotes('');
+      }, 2600);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Unable to submit request. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <div className="bg-[#F8FAFC] min-h-screen py-10 sm:py-14">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        {/* Header */}
         <div className="max-w-2xl mb-8">
-          <span className="text-xs font-bold uppercase tracking-widest text-[#005A9C]">
-            Uganda Chapter Directory
-          </span>
+          <span className="text-xs font-bold text-[#005A9C]">Uganda Chapter Directory</span>
           <h1 className="font-heading text-3xl sm:text-4xl font-extrabold text-[#1B365D] mt-1">
             Programmes &amp; Youth Circles
           </h1>
           <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-            All programmes operate under strict child safeguarding supervision. Boys are placed in small, safe cohort circles guided by vetted community mentors.
+            All programmes operate under strict child safeguarding supervision. Boys ages 5–17 require verified guardian consent before circle placement, while young adults 18–35 self-consent.
           </p>
         </div>
 
         {/* Filter and Search Bar */}
-        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs mb-8 space-y-4">
+        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 mb-8 space-y-4">
           <div className="flex flex-col md:flex-row items-center gap-3">
-            {/* Search Input */}
             <div className="relative flex-1 w-full">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
@@ -110,7 +134,6 @@ export const ProgrammesPage: React.FC = () => {
               />
             </div>
 
-            {/* District Selector */}
             <div className="flex items-center gap-2 w-full md:w-auto">
               <MapPin className="w-4 h-4 text-[#005A9C] shrink-0" />
               <select
@@ -128,15 +151,14 @@ export const ProgrammesPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Category Tabs (Functional segmented controls) */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             {categories.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap min-h-[38px] ${
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 min-h-[40px] ${
                   selectedCategory === cat
-                    ? 'bg-[#005A9C] text-white shadow-xs'
+                    ? 'bg-[#005A9C] text-white'
                     : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
                 }`}
               >
@@ -146,7 +168,6 @@ export const ProgrammesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Programmes Grid */}
         {filteredProgrammes.length === 0 ? (
           <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 max-w-md mx-auto my-12">
             <Filter className="w-10 h-10 text-slate-300 mx-auto mb-3" />
@@ -160,7 +181,7 @@ export const ProgrammesPage: React.FC = () => {
                 setSelectedDistrict('All');
                 setSearchQuery('');
               }}
-              className="mt-4 px-4 py-2 bg-[#005A9C] text-white text-xs font-semibold rounded-lg"
+              className="mt-4 px-4 py-2 bg-[#005A9C] text-white text-xs font-semibold rounded-lg min-h-[40px]"
             >
               Reset Filters
             </button>
@@ -170,7 +191,7 @@ export const ProgrammesPage: React.FC = () => {
             {filteredProgrammes.map((prog) => (
               <div
                 key={prog.id}
-                className="bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between"
+                className="bg-white rounded-2xl overflow-hidden border border-slate-200 flex flex-col justify-between"
               >
                 {prog.imagePath && (
                   <div className="relative h-48 w-full overflow-hidden bg-slate-100">
@@ -180,9 +201,6 @@ export const ProgrammesPage: React.FC = () => {
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-[#1B365D]/90 backdrop-blur-xs text-[11px] font-bold text-[#60C1E5]">
-                      {prog.ageRange}
-                    </div>
                   </div>
                 )}
 
@@ -191,21 +209,17 @@ export const ProgrammesPage: React.FC = () => {
                     <div className="flex items-center gap-2 text-xs text-slate-500 mb-1.5">
                       <span className="font-semibold text-[#005A9C]">{prog.category}</span>
                       <span aria-hidden="true">·</span>
-                      <span className="tabular-nums">{prog.activeBoysCount} boys active</span>
+                      <span>{prog.ageRange}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="tabular-nums">{prog.activeBoysCount} active</span>
                     </div>
 
-                    <h3 className="font-heading text-lg font-bold text-[#1B365D]">
-                      {prog.title}
-                    </h3>
+                    <h3 className="font-heading text-lg font-bold text-[#1B365D]">{prog.title}</h3>
 
-                    <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                      {prog.shortDescription}
-                    </p>
+                    <p className="mt-2 text-xs text-slate-600 leading-relaxed">{prog.shortDescription}</p>
 
                     <div className="mt-4 space-y-1.5">
-                      <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                        Core Competencies:
-                      </div>
+                      <div className="text-[11px] font-bold text-slate-700">Core Competencies:</div>
                       {prog.outcomes.map((outcome, idx) => (
                         <div key={idx} className="flex items-start gap-1.5 text-xs text-slate-600">
                           <CheckCircle2 className="w-3.5 h-3.5 text-[#005A9C] shrink-0 mt-0.5" />
@@ -221,20 +235,18 @@ export const ProgrammesPage: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span>{prog.districtLocations.slice(0, 3).join(', ')}{prog.districtLocations.length > 3 ? '...' : ''}</span>
+                        <span>{prog.districtLocations.slice(0, 3).join(', ')}</span>
                       </div>
                     </div>
                   </div>
 
                   <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-emerald-700 tabular-nums">
-                        {prog.availablePlaces} places available
-                      </span>
-                    </div>
+                    <span className="text-xs font-bold text-emerald-700 tabular-nums">
+                      {prog.availablePlaces} places available
+                    </span>
                     <button
                       onClick={() => setActiveModalProg(prog)}
-                      className="px-4 py-2 bg-[#005A9C] hover:bg-[#004980] text-white text-xs font-semibold rounded-xl transition-colors shadow-xs min-h-[44px]"
+                      className="px-4 py-2 bg-[#005A9C] hover:bg-[#004980] text-white text-xs font-semibold rounded-xl min-h-[44px]"
                     >
                       Request a Place
                     </button>
@@ -246,25 +258,26 @@ export const ProgrammesPage: React.FC = () => {
         )}
 
         {/* Direct WhatsApp Consultation Banner */}
-        <div className="mt-12 bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-6">
+        <div className="mt-12 bg-white rounded-2xl p-6 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="space-y-1 text-center sm:text-left">
-            <div className="text-xs font-bold text-emerald-800 uppercase tracking-wider">
+            <div className="text-xs font-bold text-emerald-800">
               Social Organisation to Unite Boys · Uganda
             </div>
             <h3 className="font-heading text-lg font-bold text-[#1B365D]">
               Have questions about enrolling a boy or joining a circle?
             </h3>
             <p className="text-xs text-slate-600">
-              Chat directly with our community coordinator on WhatsApp at <strong className="text-slate-900 font-mono">0732320190</strong> for advice on age cohorts and locations.
+              Chat directly with our community coordinator on WhatsApp at{' '}
+              <strong className="text-slate-900 font-mono">{cms.whatsappNumber}</strong> for advice on age cohorts and locations.
             </p>
           </div>
           <a
-            href="https://wa.me/256732320190?text=Hello%20Boy%20Child%20Association%2C%20I%20would%20like%20guidance%20on%20which%20programme%20or%20circle%20fits%20best"
+            href={`https://wa.me/256${cms.whatsappNumber.replace(/^0/, '')}?text=Hello%20Boy%20Child%20Association%2C%20I%20would%20like%20guidance%20on%20which%20programme%20or%20circle%20fits%20best`}
             target="_blank"
             rel="noopener noreferrer"
-            className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors shrink-0 flex items-center gap-2 min-h-[44px]"
+            className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shrink-0 flex items-center gap-2 min-h-[44px]"
           >
-            <span>Inquire on WhatsApp (0732320190)</span>
+            <span>Inquire on WhatsApp ({cms.whatsappNumber})</span>
           </a>
         </div>
 
@@ -299,9 +312,9 @@ export const ProgrammesPage: React.FC = () => {
                   <div className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto mb-3">
                     <CheckCircle2 className="w-7 h-7" />
                   </div>
-                  <h4 className="text-base font-bold text-[#1B365D]">Place Request Submitted</h4>
+                  <h4 className="text-base font-bold text-[#1B365D]">Place Request Recorded</h4>
                   <p className="text-xs text-slate-600 mt-1 max-w-sm mx-auto">
-                    Our local circle coordinator will contact you on <strong className="text-[#005A9C]">{applicantPhone}</strong> to verify guardian consent and confirm session start dates.
+                    Your application is queued for our {applicantDistrict} Coordinator to review and contact <strong className="text-[#005A9C]">{applicantPhone}</strong>.
                   </p>
                 </div>
               ) : (
@@ -326,7 +339,7 @@ export const ProgrammesPage: React.FC = () => {
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
                         Contact Phone <span className="text-[#DC2626]">*</span>
@@ -342,30 +355,44 @@ export const ProgrammesPage: React.FC = () => {
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Age of Applicant <span className="text-[#DC2626]">*</span>
+                        Age (5–35) <span className="text-[#DC2626]">*</span>
                       </label>
                       <input
                         type="number"
                         value={applicantAge}
                         onChange={(e) => setApplicantAge(e.target.value)}
-                        placeholder="e.g. 15"
+                        placeholder="15"
                         min="5"
                         max="35"
                         className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:border-[#005A9C] min-h-[44px]"
                         required
                       />
                     </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">District</label>
+                      <select
+                        value={applicantDistrict}
+                        onChange={(e) => setApplicantDistrict(e.target.value)}
+                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 min-h-[44px]"
+                      >
+                        {UGANDA_DISTRICTS.slice(0, 15).map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Special Learning Interests or Notes
+                      Learning Interests or Accessibility Notes
                     </label>
                     <textarea
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                       rows={2}
-                      placeholder="e.g. Needs help with mathematics, interested in solar kits"
+                      placeholder="e.g. Interested in solar tinkering and Saturday academic tutoring"
                       className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:border-[#005A9C]"
                     />
                   </div>
@@ -373,7 +400,7 @@ export const ProgrammesPage: React.FC = () => {
                   <div className="p-3 bg-[#F4F8FC] rounded-xl text-[11px] text-[#1B365D] border border-blue-100 flex items-start gap-2">
                     <Sparkles className="w-4 h-4 text-[#005A9C] shrink-0 mt-0.5" />
                     <span>
-                      Applicants under 18 will require parental/guardian consent verification before attending the first circle session.
+                      Applicants under 18 are logged as pending guardian consent and matched after parent verification.
                     </span>
                   </div>
 
@@ -387,10 +414,11 @@ export const ProgrammesPage: React.FC = () => {
                     </button>
                     <button
                       type="submit"
-                      className="px-5 py-2.5 bg-[#005A9C] hover:bg-[#004980] text-white text-xs font-bold rounded-xl flex items-center gap-2 min-h-[44px]"
+                      disabled={submitting}
+                      className="px-5 py-2.5 bg-[#005A9C] hover:bg-[#004980] text-white text-xs font-bold rounded-xl flex items-center gap-2 min-h-[44px] disabled:opacity-50"
                     >
                       <Send className="w-4 h-4" />
-                      <span>Submit Request</span>
+                      <span>{submitting ? 'Submitting...' : 'Submit Request'}</span>
                     </button>
                   </div>
                 </form>

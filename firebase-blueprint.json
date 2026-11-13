@@ -1,0 +1,507 @@
+{
+  "project": {
+    "id": "boy-child-association-9a36f",
+    "databaseId": "ai-studio-boychildassociat-e2cf5f8e-ec8b-4c04-89e0-7eec41b5c3d0",
+    "name": "Boy Child Association Uganda"
+  },
+  "entities": {
+    "users": {
+      "description": "Core identity, RBAC role, account status, and safeguarding clearance flags.",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["boy", "guardian", "mentor", "partner", "coordinator", "admin"] },
+        "status": { "type": "string", "enum": ["active", "pending_guardian_consent", "pending_vetting", "suspended"] },
+        "ageCategory": { "type": "string", "enum": ["child_5_17", "young_adult_18_35", "adult"] },
+        "safeguardingCleared": { "type": "boolean" },
+        "assignedCaseIds": { "type": "array" },
+        "membershipNumber": { "type": "string" },
+        "membershipIssuedAt": { "type": "string" },
+        "membershipQrToken": { "type": "string" },
+        "district": { "type": "string" },
+        "town": { "type": "string" },
+        "calculatedAge": { "type": "number" },
+        "guardianId": { "type": "string" },
+        "circleId": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["uid", "email", "fullName", "role", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "memberProfiles": {
+      "description": "Boy and young man profile records separated by 5-17 vs 18-35 age rules.",
+      "properties": {
+        "uid": { "type": "string" },
+        "fullName": { "type": "string" },
+        "ageCategory": { "type": "string", "enum": ["child_5_17", "young_adult_18_35"] },
+        "calculatedAge": { "type": "number" },
+        "district": { "type": "string" },
+        "town": { "type": "string" },
+        "schoolOrOccupation": { "type": "string" },
+        "interests": { "type": "array" },
+        "circleId": { "type": "string" },
+        "achievements": { "type": "array" },
+        "attendanceCount": { "type": "number" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["uid", "fullName", "ageCategory", "district", "createdAt", "updatedAt", "createdBy"]
+    },
+    "guardianLinks": {
+      "description": "Verified parent/guardian to child relationships requiring invitation/code verification.",
+      "properties": {
+        "id": { "type": "string" },
+        "guardianId": { "type": "string" },
+        "guardianName": { "type": "string" },
+        "guardianPhone": { "type": "string" },
+        "boyId": { "type": "string" },
+        "boyName": { "type": "string" },
+        "relationship": { "type": "string" },
+        "verificationCode": { "type": "string" },
+        "verificationMethod": { "type": "string" },
+        "authorityEvidence": { "type": "string" },
+        "verifiedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending_verification", "verified", "revoked"] },
+        "verifiedAt": { "type": "timestamp" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["guardianId", "boyId", "verificationMethod", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "consentRecords": {
+      "description": "Immutable versioned guardian consent grants and withdrawals with authority verification proof.",
+      "properties": {
+        "id": { "type": "string" },
+        "boyId": { "type": "string" },
+        "guardianId": { "type": "string" },
+        "action": { "type": "string", "enum": ["granted", "withdrawn"] },
+        "consentVersion": { "type": "string" },
+        "method": { "type": "string" },
+        "verificationMethod": { "type": "string" },
+        "authorityEvidence": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["boyId", "guardianId", "action", "consentVersion", "verificationMethod", "authorityEvidence", "createdAt", "createdBy"]
+    },
+    "membershipApplications": {
+      "description": "Applications submitted by boys, young men, or guardians.",
+      "properties": {
+        "id": { "type": "string" },
+        "applicantUid": { "type": "string" },
+        "fullName": { "type": "string" },
+        "ageCategory": { "type": "string", "enum": ["child_5_17", "young_adult_18_35"] },
+        "calculatedAge": { "type": "number" },
+        "district": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "reviewedBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["fullName", "ageCategory", "district", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "mentorApplications": {
+      "description": "Mentor onboarding applications with safeguarding pledges and vetting status.",
+      "properties": {
+        "id": { "type": "string" },
+        "applicantUid": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "district": { "type": "string" },
+        "occupation": { "type": "string" },
+        "motivation": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending_vetting", "approved", "declined"] },
+        "dbsSafeguardingCheck": { "type": "string", "enum": ["pending", "cleared", "flagged"] },
+        "documentUrls": { "type": "array" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["fullName", "email", "district", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "mentorReferees": {
+      "description": "Two independent community referees required for every mentor candidate.",
+      "properties": {
+        "id": { "type": "string" },
+        "applicationId": { "type": "string" },
+        "mentorUid": { "type": "string" },
+        "refereeIndex": { "type": "number" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "relationship": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "verified", "flagged"] },
+        "verifiedBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["applicationId", "name", "phone", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "partners": {
+      "description": "Verified partner schools, churches, NGOs, and community organisations.",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "orgName": { "type": "string" },
+        "orgType": { "type": "string", "enum": ["school", "church", "business", "ngo", "community_cbo"] },
+        "district": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "verified", "suspended"] },
+        "vanguardClubActive": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["ownerUid", "orgName", "orgType", "district", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "partnerApplications": {
+      "description": "Partnership, School Vanguard Club, and event collaboration proposals.",
+      "properties": {
+        "id": { "type": "string" },
+        "applicantUid": { "type": "string" },
+        "orgName": { "type": "string" },
+        "orgType": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "district": { "type": "string" },
+        "applicationType": { "type": "string", "enum": ["institutional_partner", "vanguard_club", "event_collaboration"] },
+        "proposal": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "declined"] },
+        "documentUrls": { "type": "array" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["orgName", "contactPerson", "district", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "mentorshipCircles": {
+      "description": "Supervised community mentorship circles led by vetted adult mentors.",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "district": { "type": "string" },
+        "locationName": { "type": "string" },
+        "meetingTime": { "type": "string" },
+        "leadMentorId": { "type": "string" },
+        "leadMentorName": { "type": "string" },
+        "coMentorIds": { "type": "array" },
+        "safeguardingLeadName": { "type": "string" },
+        "maxMembers": { "type": "number" },
+        "activeMembersCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "forming", "full"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["name", "district", "leadMentorId", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "circleMemberships": {
+      "description": "Explicit circle enrollment records controlling mentor and guardian read scope.",
+      "properties": {
+        "id": { "type": "string" },
+        "circleId": { "type": "string" },
+        "userId": { "type": "string" },
+        "memberName": { "type": "string" },
+        "ageCategory": { "type": "string" },
+        "leadMentorId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "paused", "completed"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["circleId", "userId", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "programmes": {
+      "description": "CMS-managed programmes catalogue (only published items visible publicly).",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string", "enum": ["Mentorship", "Wellbeing", "Skills", "Clubs", "Families"] },
+        "ageRange": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["title", "category", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "events": {
+      "description": "Community training workshops, circle gatherings, and partner events.",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "district": { "type": "string" },
+        "location": { "type": "string" },
+        "startsAt": { "type": "string" },
+        "circleId": { "type": "string" },
+        "partnerId": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["title", "district", "startsAt", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "attendance": {
+      "description": "Verified session and event attendance logged by assigned mentors/coordinators.",
+      "properties": {
+        "id": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "circleId": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberName": { "type": "string" },
+        "mentorId": { "type": "string" },
+        "status": { "type": "string", "enum": ["present", "absent", "excused"] },
+        "date": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["sessionId", "circleId", "memberId", "status", "date", "createdAt", "updatedAt", "createdBy"]
+    },
+    "learningResources": {
+      "description": "Educational toolkits, leadership guides, and parent safeguarding handbooks.",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "audience": { "type": "string", "enum": ["all", "boys", "guardians", "mentors", "partners"] },
+        "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["title", "category", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "announcements": {
+      "description": "News updates, community stories, and official announcements.",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "type": { "type": "string", "enum": ["news", "story", "announcement"] },
+        "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["title", "type", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "notifications": {
+      "description": "Role-filtered in-app notifications (strictly zero confidential safeguarding text).",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "category": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["userId", "title", "message", "read", "createdAt", "createdBy"]
+    },
+    "concernReports": {
+      "description": "Confidential safeguarding concern intake (write-only for public/members).",
+      "properties": {
+        "id": { "type": "string" },
+        "refNumber": { "type": "string" },
+        "isAnonymous": { "type": "boolean" },
+        "district": { "type": "string" },
+        "concernCategory": { "type": "string" },
+        "urgency": { "type": "string", "enum": ["low", "medium", "high", "immediate"] },
+        "details": { "type": "string" },
+        "status": { "type": "string", "enum": ["new", "under_review", "escalated", "resolved"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["isAnonymous", "district", "concernCategory", "urgency", "details", "status", "createdAt", "updatedAt"]
+    },
+    "safeguardingCases": {
+      "description": "Restricted child safeguarding case management records accessible ONLY to admins or safeguarding-cleared coordinators.",
+      "properties": {
+        "id": { "type": "string" },
+        "refNumber": { "type": "string" },
+        "reportId": { "type": "string" },
+        "urgency": { "type": "string", "enum": ["low", "medium", "high", "immediate"] },
+        "district": { "type": "string" },
+        "status": { "type": "string", "enum": ["new", "unassigned", "under_review", "follow_up", "escalated", "resolved"] },
+        "assignedLeadId": { "type": "string" },
+        "assignedLeadName": { "type": "string" },
+        "triageNotes": { "type": "string" },
+        "escalationChannel": { "type": "string" },
+        "escalationRef": { "type": "string" },
+        "followUps": { "type": "array" },
+        "attachments": { "type": "array" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["refNumber", "urgency", "district", "status", "createdAt", "updatedAt", "createdBy"]
+    },
+    "auditLogs": {
+      "description": "Append-only immutable audit log for safeguarding, consent, role, and privacy actions.",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "performedBy": { "type": "string" },
+        "performedByRole": { "type": "string" },
+        "targetEntity": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "timestamp" }
+      },
+      "required": ["action", "performedBy", "performedByRole", "targetEntity", "targetId", "timestamp"]
+    },
+    "systemSettings": {
+      "description": "CMS site sections, approved stats, FAQs, navigation, contact details, and DPPA retention policies.",
+      "properties": {
+        "id": { "type": "string" },
+        "key": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+        "payload": { "type": "object" },
+        "updatedAt": { "type": "timestamp" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["key", "status", "payload", "updatedAt"]
+    },
+    "sessions": {
+      "description": "Supervised circle meeting sessions.",
+      "properties": {
+        "id": { "type": "string" },
+        "circleId": { "type": "string" },
+        "title": { "type": "string" },
+        "theme": { "type": "string" },
+        "scheduledAt": { "type": "string" },
+        "location": { "type": "string" },
+        "mentorId": { "type": "string" },
+        "mentorName": { "type": "string" },
+        "completed": { "type": "boolean" }
+      },
+      "required": ["circleId", "title", "scheduledAt"]
+    },
+    "goals": {
+      "description": "Member personal growth milestones.",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "circleId": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "progress": { "type": "number" },
+        "targetDate": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["userId", "title", "progress", "createdAt", "updatedAt"]
+    },
+    "questions": {
+      "description": "Supervised circle Ask-a-Mentor threads (no 1:1 minor DMs).",
+      "properties": {
+        "id": { "type": "string" },
+        "circleId": { "type": "string" },
+        "userId": { "type": "string" },
+        "authorAlias": { "type": "string" },
+        "isAnonymous": { "type": "boolean" },
+        "category": { "type": "string" },
+        "question": { "type": "string" },
+        "mentorReply": { "type": "string" },
+        "isModerated": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" }
+      },
+      "required": ["circleId", "userId", "question", "isModerated", "createdAt"]
+    },
+    "membershipVerifications": {
+      "description": "Privacy-safe Digital Membership Card verification records (zero minor PII exposed publicly).",
+      "properties": {
+        "membershipNumber": { "type": "string" },
+        "uid": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "pending_guardian_consent", "pending_vetting", "suspended"] },
+        "ageCategory": { "type": "string" },
+        "district": { "type": "string" },
+        "circleName": { "type": "string" },
+        "issuedAt": { "type": "string" },
+        "qrToken": { "type": "string" },
+        "isMinor": { "type": "boolean" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["membershipNumber", "uid", "status", "ageCategory", "district", "qrToken", "isMinor", "updatedAt"]
+    },
+    "eventRegistrations": {
+      "description": "National & district event registrations and attendance check-in records.",
+      "properties": {
+        "id": { "type": "string" },
+        "eventId": { "type": "string" },
+        "userId": { "type": "string" },
+        "attendeeName": { "type": "string" },
+        "attendeeEmail": { "type": "string" },
+        "district": { "type": "string" },
+        "confirmationCode": { "type": "string" },
+        "attendanceStatus": { "type": "string", "enum": ["registered", "present", "absent", "excused"] },
+        "markedBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["eventId", "attendeeName", "district", "confirmationCode", "attendanceStatus", "createdAt"]
+    },
+    "dataProtectionRequests": {
+      "description": "Uganda DPPA 2019 Subject Access, Correction, and Deletion requests.",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "type": { "type": "string", "enum": ["export", "correction", "deletion"] },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "completed", "held_for_safeguarding", "rejected"] },
+        "reviewedBy": { "type": "string" },
+        "resolutionNotes": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["userId", "type", "reason", "status", "createdAt"]
+    },
+    "contactMessages": {
+      "description": "General public website contact inquiries routed to coordinators/admins.",
+      "properties": {
+        "id": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["new", "in_progress", "resolved"] },
+        "handledBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["fullName", "email", "subject", "message", "status", "createdAt", "updatedAt"]
+    },
+    "progressReports": {
+      "description": "Structured mentor circle progress reports covering attendance, milestones, and safeguarding observations.",
+      "properties": {
+        "id": { "type": "string" },
+        "circleId": { "type": "string" },
+        "circleName": { "type": "string" },
+        "mentorId": { "type": "string" },
+        "mentorName": { "type": "string" },
+        "reportingPeriod": { "type": "string" },
+        "attendanceSummary": { "type": "string" },
+        "keyMilestones": { "type": "string" },
+        "safeguardingObservations": { "type": "string" },
+        "supportNeeded": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["circleId", "mentorId", "reportingPeriod", "attendanceSummary", "keyMilestones", "safeguardingObservations", "createdAt", "updatedAt"]
+    }
+  }
+}

@@ -2,221 +2,659 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // -------------------------------------------------------------
-    // Helper Functions & Safeguarding Access Control
-    // -------------------------------------------------------------
+    // =========================================================================
+    // HELPER FUNCTIONS (Eight Pillars Hardening)
+    // =========================================================================
+
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isUser(uid) {
+    function isOwner(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    function getUserDoc(uid) {
-      return get(/databases/$(database)/documents/users/$(uid)).data;
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[A-Za-z0-9_\\-]+$');
     }
 
-    function currentUserData() {
-      return isSignedIn() ? getUserDoc(request.auth.uid) : null;
+    function isNonEmptyString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
     }
 
-    function hasRole(role) {
-      return isSignedIn() && currentUserData() != null && currentUserData().role == role;
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    function isCoordinator() {
-      return hasRole('coordinator');
+    function isBootstrapAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'mukuladavid6@gmail.com'
+        && request.auth.token.email_verified == true;
     }
 
     function isAdmin() {
-      return hasRole('admin');
+      return isBootstrapAdmin()
+        || (isSignedIn() && request.auth.token.role == 'admin')
+        || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getUserDoc().role == 'admin'
+            && getUserDoc().status == 'active');
     }
 
-    function isSafeguardingLead() {
-      return isCoordinator() || isAdmin();
+    function isCoordinator() {
+      return isAdmin()
+        || (isSignedIn() && request.auth.token.role == 'coordinator')
+        || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getUserDoc().role == 'coordinator'
+            && getUserDoc().status == 'active');
+    }
+
+    function isSafeguardingCleared() {
+      return isAdmin()
+        || (isSignedIn() && request.auth.token.safeguardingCleared == true)
+        || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getUserDoc().role == 'coordinator'
+            && getUserDoc().status == 'active'
+            && getUserDoc().safeguardingCleared == true);
     }
 
     function isMentor() {
-      return hasRole('mentor');
+      return isSignedIn() && (
+        request.auth.token.role == 'mentor'
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getUserDoc().role == 'mentor'
+            && getUserDoc().status == 'active')
+      );
     }
 
     function isGuardian() {
-      return hasRole('guardian');
+      return isSignedIn() && (
+        request.auth.token.role == 'guardian'
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getUserDoc().role == 'guardian'
+            && getUserDoc().status == 'active')
+      );
     }
 
-    // Safeguarding: A minor pending guardian consent cannot access circle threads
-    function isApprovedMember(uid) {
-      let u = getUserDoc(uid);
-      return u != null && u.status == 'active';
+    function isPartner() {
+      return isSignedIn() && (
+        request.auth.token.role == 'partner'
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getUserDoc().role == 'partner'
+            && getUserDoc().status == 'active')
+      );
     }
 
-    // -------------------------------------------------------------
-    // 1. Users Collection
-    // -------------------------------------------------------------
+    function isActiveAccount() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getUserDoc().status == 'active';
+    }
+
+    function isNotSuspended() {
+      return isSignedIn()
+        && request.auth.token.get('suspended', false) != true
+        && (!exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            || getUserDoc().status != 'suspended');
+    }
+
+    function isVerifiedGuardianOf(boyId) {
+      return isGuardian()
+        && exists(/databases/$(database)/documents/guardianLinks/$(request.auth.uid + '_' + boyId))
+        && get(/databases/$(database)/documents/guardianLinks/$(request.auth.uid + '_' + boyId)).data.status == 'verified';
+    }
+
+    function isMentorOfCircle(circleId) {
+      return isMentor()
+        && circleId is string
+        && exists(/databases/$(database)/documents/mentorshipCircles/$(circleId))
+        && (get(/databases/$(database)/documents/mentorshipCircles/$(circleId)).data.leadMentorId == request.auth.uid
+            || (get(/databases/$(database)/documents/mentorshipCircles/$(circleId)).data.coMentorIds is list
+                && request.auth.uid in get(/databases/$(database)/documents/mentorshipCircles/$(circleId)).data.coMentorIds));
+    }
+
+    // =========================================================================
+    // HEALTH CHECK CONNECTION TEST (Required by SDK verification)
+    // =========================================================================
+    match /test/connection {
+      allow read: if request.time != null;
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 1. USERS COLLECTION (Strict RBAC & Self-Privilege Lock)
+    // =========================================================================
     match /users/{uid} {
-      // Users can read their own profile; Safeguarding leads and admins can read any profile
-      allow read: if isUser(uid) || isSafeguardingLead();
+      allow get: if isOwner(uid) || isCoordinator() || isVerifiedGuardianOf(uid);
+      allow list: if isCoordinator();
 
-      // Creation on sign-up: role MUST be 'boy' or 'guardian'. Elevated roles require Admin
-      allow create: if isUser(uid)
-                    && request.resource.data.role in ['boy', 'guardian']
-                    && request.resource.data.status in ['active', 'pending_guardian_consent']
-                    && request.resource.data.createdAt == request.time
-                    && request.resource.data.updatedAt == request.time;
+      allow create: if isOwner(uid)
+        && isValidId(uid)
+        && request.resource.data.keys().hasAll(['uid', 'email', 'fullName', 'role', 'status', 'createdAt', 'updatedAt', 'createdBy'])
+        && request.resource.data.uid == uid
+        && request.resource.data.createdBy == uid
+        && request.resource.data.role in ['boy', 'guardian']
+        && request.resource.data.status in ['active', 'pending_guardian_consent']
+        && (!('safeguardingCleared' in request.resource.data) || request.resource.data.safeguardingCleared == false)
+        && !('assignedCaseIds' in request.resource.data)
+        && isNonEmptyString(request.resource.data.fullName, 2, 80)
+        && isNonEmptyString(request.resource.data.email, 3, 254)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
 
-      // Updates: A user can NEVER change their own role or status. Elevated roles can only be set by admin
-      allow update: if (isUser(uid)
-                        && request.resource.data.role == resource.data.role
-                        && request.resource.data.status == resource.data.status
-                        && request.resource.data.updatedAt == request.time)
-                    || isAdmin();
+      allow update: if (
+        isOwner(uid)
+        && isNotSuspended()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.get('safeguardingCleared', false) == resource.data.get('safeguardingCleared', false)
+        && request.resource.data.get('assignedCaseIds', []) == resource.data.get('assignedCaseIds', [])
+        && request.resource.data.get('membershipNumber', null) == resource.data.get('membershipNumber', null)
+        && request.resource.data.get('membershipQrToken', null) == resource.data.get('membershipQrToken', null)
+        && (!('avatarUrl' in request.resource.data) || (request.resource.data.avatarUrl is string && request.resource.data.avatarUrl.size() <= 1024))
+        && (!('district' in request.resource.data) || isNonEmptyString(request.resource.data.district, 2, 60))
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.updatedAt == request.time
+      ) || isAdmin();
 
       allow delete: if isAdmin();
     }
 
-    // -------------------------------------------------------------
-    // 2. Member Profiles (Deep Safeguarding Profile)
-    // -------------------------------------------------------------
+    // =========================================================================
+    // 2. MEMBER PROFILES (No Public Minor Directory)
+    // =========================================================================
     match /memberProfiles/{memberId} {
-      allow read: if isUser(memberId) 
-                  || isSafeguardingLead()
-                  // Guardian can read linked boy's profile
-                  || (isGuardian() && exists(/databases/$(database)/documents/guardianLinks/$(request.auth.uid + '_' + memberId)))
-                  // Mentor can read boys in their assigned circles
-                  || (isMentor() && resource.data.circleId != null && exists(/databases/$(database)/documents/circles/$(resource.data.circleId)/mentors/$(request.auth.uid)));
+      allow get: if isOwner(memberId)
+        || isCoordinator()
+        || isVerifiedGuardianOf(memberId)
+        || (isMentor() && resource.data.circleId != null && isMentorOfCircle(resource.data.circleId));
 
-      allow write: if (isUser(memberId) && request.resource.data.role == 'boy')
-                   || isSafeguardingLead();
+      // Minors must never appear in general searchable directories
+      allow list: if isCoordinator()
+        || (isMentor() && resource.data.circleId != null)
+        || (isGuardian() && resource.data.guardianId == request.auth.uid)
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+
+      allow create: if (isOwner(memberId) || isCoordinator())
+        && isValidId(memberId)
+        && request.resource.data.uid == memberId
+        && request.resource.data.ageCategory in ['child_5_17', 'young_adult_18_35']
+        && isNonEmptyString(request.resource.data.fullName, 2, 80)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if (
+        isOwner(memberId)
+        && isNotSuspended()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.ageCategory == resource.data.ageCategory
+        && request.resource.data.get('circleId', null) == resource.data.get('circleId', null)
+        && request.resource.data.updatedAt == request.time
+      ) || isCoordinator();
+
+      allow delete: if isAdmin();
     }
 
-    // -------------------------------------------------------------
-    // 3. Guardian Links & Consents (Uganda Child Law compliance)
-    // -------------------------------------------------------------
+    // =========================================================================
+    // 3. GUARDIAN LINKS (Verified Relationship Enforcement)
+    // =========================================================================
     match /guardianLinks/{linkId} {
-      allow read: if isSafeguardingLead() 
-                  || (isSignedIn() && (resource.data.guardianId == request.auth.uid || resource.data.boyId == request.auth.uid));
+      allow get: if isCoordinator()
+        || (isSignedIn() && (resource.data.guardianId == request.auth.uid || resource.data.boyId == request.auth.uid));
 
-      allow create, update: if isSafeguardingLead()
-                            || (isGuardian() && request.resource.data.guardianId == request.auth.uid);
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.guardianId == request.auth.uid)
+        || (isSignedIn() && resource.data.boyId == request.auth.uid);
 
-      allow delete: if isSafeguardingLead();
+      // Guardians cannot create an instant 'verified' link without verification
+      allow create: if (
+        isCoordinator()
+        || (isGuardian()
+            && request.resource.data.guardianId == request.auth.uid
+            && request.resource.data.status == 'pending_verification'
+            && request.resource.data.verificationMethod in ['child_code_confirmation', 'coordinator_id_check', 'guardian_sms_otp', 'school_patron_attestation']
+            && isNonEmptyString(request.resource.data.verificationCode, 6, 12))
+      )
+      && isValidId(linkId)
+      && request.resource.data.createdAt == request.time
+      && request.resource.data.updatedAt == request.time;
+
+      allow update: if isCoordinator()
+        || (isOwner(resource.data.boyId)
+            && resource.data.status == 'pending_verification'
+            && request.resource.data.status == 'verified'
+            && request.resource.data.verificationCode == resource.data.verificationCode
+            && request.resource.data.updatedAt == request.time);
+
+      allow delete: if isAdmin();
     }
 
-    match /consents/{consentId} {
-      allow read: if isSafeguardingLead()
-                  || (isSignedIn() && (resource.data.guardianId == request.auth.uid || resource.data.boyId == request.auth.uid));
+    // =========================================================================
+    // 4. CONSENT RECORDS (Immutable Versioned Grants & Withdrawals)
+    // =========================================================================
+    match /consentRecords/{consentId} {
+      allow get: if isCoordinator()
+        || (isSignedIn() && (resource.data.guardianId == request.auth.uid || resource.data.boyId == request.auth.uid));
 
-      allow create: if isGuardian() && request.resource.data.guardianId == request.auth.uid;
-      allow update: if isSafeguardingLead();
-      allow delete: if false; // Consents are immutable legal records
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.guardianId == request.auth.uid)
+        || (isSignedIn() && resource.data.boyId == request.auth.uid);
+
+      allow create: if (
+        isCoordinator()
+        || (isVerifiedGuardianOf(request.resource.data.boyId)
+            && request.resource.data.guardianId == request.auth.uid
+            && request.resource.data.verificationMethod in ['child_code_confirmation', 'coordinator_id_check', 'guardian_sms_otp', 'school_patron_attestation']
+            && isNonEmptyString(request.resource.data.authorityEvidence, 4, 240))
+      )
+      && isValidId(consentId)
+      && request.resource.data.action in ['granted', 'withdrawn']
+      && isNonEmptyString(request.resource.data.consentVersion, 1, 20)
+      && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false; // Immutable legal ledger
     }
 
-    // -------------------------------------------------------------
-    // 4. Programmes & Circles
-    // -------------------------------------------------------------
-    match /programmes/{programmeId} {
-      allow read: if true; // Public programme catalogue
-      allow write: if isSafeguardingLead();
+    // =========================================================================
+    // 5. MEMBERSHIP APPLICATIONS (5-17 vs 18-35)
+    // =========================================================================
+    match /membershipApplications/{appId} {
+      allow get: if isCoordinator()
+        || (isSignedIn() && resource.data.applicantUid == request.auth.uid);
+
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.applicantUid == request.auth.uid);
+
+      allow create: if isValidId(appId)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.ageCategory in ['child_5_17', 'young_adult_18_35']
+        && request.resource.data.calculatedAge is number
+        && request.resource.data.calculatedAge >= 5
+        && request.resource.data.calculatedAge <= 35
+        && isNonEmptyString(request.resource.data.fullName, 2, 80)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isCoordinator();
+      allow delete: if isAdmin();
     }
 
-    match /circles/{circleId} {
-      // Circles are visible to all authenticated active members, guardians, mentors and leads
-      allow read: if isSignedIn();
-      allow write: if isSafeguardingLead();
+    // =========================================================================
+    // 6. MENTOR APPLICATIONS & 7. MENTOR REFEREES
+    // =========================================================================
+    match /mentorApplications/{appId} {
+      allow get: if isCoordinator()
+        || (isSignedIn() && resource.data.applicantUid == request.auth.uid);
 
-      // Nested mentors assignment subcollection
-      match /mentors/{mentorId} {
-        allow read: if isSignedIn();
-        allow write: if isSafeguardingLead();
-      }
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.applicantUid == request.auth.uid);
+
+      allow create: if isValidId(appId)
+        && request.resource.data.status == 'pending_vetting'
+        && isNonEmptyString(request.resource.data.fullName, 2, 80)
+        && isNonEmptyString(request.resource.data.email, 3, 254)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isCoordinator();
+      allow delete: if isAdmin();
     }
 
-    match /circleMembers/{memberId} {
-      allow read: if isSafeguardingLead()
-                  || (isMentor() && exists(/databases/$(database)/documents/circles/$(resource.data.circleId)/mentors/$(request.auth.uid)))
-                  || (isUser(resource.data.userId))
-                  || (isGuardian() && exists(/databases/$(database)/documents/guardianLinks/$(request.auth.uid + '_' + resource.data.userId)));
+    match /mentorReferees/{refId} {
+      allow get: if isCoordinator()
+        || (isSignedIn() && resource.data.mentorUid == request.auth.uid);
 
-      allow create, update, delete: if isSafeguardingLead();
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.mentorUid == request.auth.uid);
+
+      allow create: if isValidId(refId)
+        && request.resource.data.status == 'pending'
+        && isNonEmptyString(request.resource.data.name, 2, 80)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isCoordinator();
+      allow delete: if isAdmin();
     }
 
-    // -------------------------------------------------------------
-    // 5. Circle Sessions & Goals
-    // -------------------------------------------------------------
+    // =========================================================================
+    // 8. PARTNERS & 9. PARTNER APPLICATIONS
+    // =========================================================================
+    match /partners/{partnerId} {
+      allow get: if (resource.data.status == 'verified')
+        || isCoordinator()
+        || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+
+      allow list: if resource.data.status == 'verified'
+        || isCoordinator()
+        || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+
+      allow create: if isCoordinator()
+        || (isPartner() && request.resource.data.ownerUid == request.auth.uid && request.resource.data.status == 'pending');
+
+      allow update: if isCoordinator()
+        || (isPartner() && resource.data.ownerUid == request.auth.uid && request.resource.data.status == resource.data.status);
+
+      allow delete: if isAdmin();
+    }
+
+    match /partnerApplications/{appId} {
+      allow get: if isCoordinator()
+        || (isSignedIn() && resource.data.applicantUid == request.auth.uid);
+
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.applicantUid == request.auth.uid);
+
+      allow create: if isValidId(appId)
+        && request.resource.data.status == 'pending'
+        && isNonEmptyString(request.resource.data.orgName, 2, 120)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isCoordinator();
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 10. MENTORSHIP CIRCLES & 11. CIRCLE MEMBERSHIPS
+    // =========================================================================
+    match /mentorshipCircles/{circleId} {
+      allow read: if (resource.data.status in ['active', 'forming', 'full']) || isSignedIn();
+      allow create, update: if isCoordinator();
+      allow delete: if isAdmin();
+    }
+
+    match /circleMemberships/{membershipId} {
+      allow get: if isCoordinator()
+        || isOwner(resource.data.userId)
+        || isVerifiedGuardianOf(resource.data.userId)
+        || isMentorOfCircle(resource.data.circleId);
+
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (isMentor() && resource.data.leadMentorId == request.auth.uid);
+
+      allow create, update, delete: if isCoordinator();
+    }
+
+    // =========================================================================
+    // 12. PROGRAMMES, 13. EVENTS, 15. LEARNING RESOURCES, 16. ANNOUNCEMENTS (CMS)
+    // =========================================================================
+    match /programmes/{progId} {
+      allow read: if resource.data.status == 'published' || isAdmin() || isCoordinator();
+      allow write: if isAdmin();
+    }
+
+    match /events/{eventId} {
+      allow read: if resource.data.status == 'published' || isAdmin() || isCoordinator() || isPartner();
+      allow create: if isCoordinator() || isPartner();
+      allow update, delete: if isAdmin() || isCoordinator();
+    }
+
+    match /learningResources/{resourceId} {
+      allow read: if resource.data.status == 'published' || isAdmin() || isCoordinator() || isMentor();
+      allow write: if isAdmin() || isCoordinator();
+    }
+
+    match /announcements/{annId} {
+      allow read: if resource.data.status == 'published' || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // 14. ATTENDANCE (Mentors for Assigned Circles + Coordinators)
+    // =========================================================================
+    match /attendance/{recordId} {
+      allow get: if isCoordinator()
+        || isOwner(resource.data.memberId)
+        || isVerifiedGuardianOf(resource.data.memberId)
+        || isMentorOfCircle(resource.data.circleId);
+
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.memberId == request.auth.uid)
+        || (isMentor() && resource.data.mentorId == request.auth.uid);
+
+      allow create, update: if isCoordinator()
+        || (isMentorOfCircle(request.resource.data.circleId)
+            && request.resource.data.mentorId == request.auth.uid
+            && request.resource.data.status in ['present', 'absent', 'excused']);
+
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 17. NOTIFICATIONS (Per-User Isolated, Zero Safeguarding Text)
+    // =========================================================================
+    match /notifications/{notifId} {
+      allow get: if isCoordinator() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isCoordinator());
+      allow create: if isCoordinator();
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // =========================================================================
+    // 18. CONCERN REPORTS (Write-Only Intake; Read Strictly Safeguarding Leads)
+    // =========================================================================
+    match /concernReports/{reportId} {
+      allow create: if isValidId(reportId)
+        && request.resource.data.isAnonymous is bool
+        && isNonEmptyString(request.resource.data.district, 2, 60)
+        && isNonEmptyString(request.resource.data.concernCategory, 2, 60)
+        && request.resource.data.urgency in ['low', 'medium', 'high', 'immediate']
+        && isNonEmptyString(request.resource.data.details, 10, 2000)
+        && request.resource.data.status == 'new'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow read, update: if isSafeguardingCleared();
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 19. SAFEGUARDING CASES (Strictly Independent: Admin or Safeguarding-Cleared Lead Only)
+    // =========================================================================
+    match /safeguardingCases/{caseId} {
+      allow get: if isSafeguardingCleared();
+      allow list: if isSafeguardingCleared();
+      allow create, update: if isSafeguardingCleared();
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 20. AUDIT LOGS (Append-Only Immutable Security Ledger)
+    // =========================================================================
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isCoordinator()
+        && isValidId(logId)
+        && isNonEmptyString(request.resource.data.action, 2, 80)
+        && request.resource.data.timestamp == request.time;
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // 21. SYSTEM SETTINGS (CMS Config, Stats, FAQs, Nav, Retention)
+    // =========================================================================
+    match /systemSettings/{settingId} {
+      allow read: if resource.data.status == 'published' || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // CIRCLE SESSIONS, GOALS & SUPERVISED Q&A THREADS
+    // =========================================================================
     match /sessions/{sessionId} {
       allow read: if isSignedIn();
-      allow write: if isSafeguardingLead() || isMentor();
+      allow create, update: if isCoordinator() || isMentorOfCircle(request.resource.data.circleId);
+      allow delete: if isAdmin() || isCoordinator();
     }
 
     match /goals/{goalId} {
-      allow read: if isSafeguardingLead()
-                  || isUser(resource.data.userId)
-                  || (isGuardian() && exists(/databases/$(database)/documents/guardianLinks/$(request.auth.uid + '_' + resource.data.userId)))
-                  || (isMentor() && resource.data.circleId != null && exists(/databases/$(database)/documents/circles/$(resource.data.circleId)/mentors/$(request.auth.uid)));
+      allow get: if isCoordinator()
+        || isOwner(resource.data.userId)
+        || isVerifiedGuardianOf(resource.data.userId)
+        || (resource.data.circleId != null && isMentorOfCircle(resource.data.circleId));
 
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if isUser(resource.data.userId) || isMentor() || isSafeguardingLead();
-      allow delete: if isUser(resource.data.userId) || isSafeguardingLead();
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      allow create: if isActiveAccount()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.progress >= 0
+        && request.resource.data.progress <= 100
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if (isOwner(resource.data.userId) && isActiveAccount())
+        || isCoordinator();
+
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
     }
 
-    // -------------------------------------------------------------
-    // 6. Ask a Mentor Questions & Moderated Responses
-    // -------------------------------------------------------------
     match /questions/{questionId} {
-      allow read: if isSafeguardingLead()
-                  || isUser(resource.data.userId)
-                  || (isMentor() && exists(/databases/$(database)/documents/circles/$(resource.data.circleId)/mentors/$(request.auth.uid)));
+      allow get: if isCoordinator()
+        || isOwner(resource.data.userId)
+        || isMentorOfCircle(resource.data.circleId);
 
-      // Must be an active member who is not pending consent
-      allow create: if isSignedIn() 
-                    && isApprovedMember(request.auth.uid)
-                    && request.resource.data.question.size() >= 10
-                    && request.resource.data.question.size() <= 1000;
+      allow list: if isCoordinator()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || isMentor();
 
-      allow update: if isSafeguardingLead() || isMentor();
-      allow delete: if isSafeguardingLead();
+      // Blocked for under-18 pending consent or suspended accounts
+      allow create: if isActiveAccount()
+        && request.resource.data.userId == request.auth.uid
+        && isNonEmptyString(request.resource.data.question, 10, 1000)
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if isCoordinator() || isMentorOfCircle(resource.data.circleId);
+      allow delete: if isCoordinator() || isAdmin();
     }
 
-    // -------------------------------------------------------------
-    // 7. Safeguarding Concern Reports (Strict Confidentiality)
-    // -------------------------------------------------------------
-    match /concernReports/{reportId} {
-      // Anyone can submit a concern report (including anonymous or signed-in)
-      allow create: if request.resource.data.details.size() >= 10
-                    && request.resource.data.details.size() <= 2000
-                    && request.resource.data.urgency in ['low', 'medium', 'high', 'immediate'];
+    // Newsletter & DPPA Data Requests (Subcollections / Dedicated Intakes)
+    match /newsletterSubscribers/{subId} {
+      allow create: if isValidId(subId)
+        && request.resource.data.consentGiven == true
+        && isNonEmptyString(request.resource.data.email, 3, 254);
+      allow read, update, delete: if isAdmin();
+    }
 
-      // STRICT PRIVACY: ONLY coordinators and admins can read or triage concern reports
-      allow read, update: if isSafeguardingLead();
+    match /dataProtectionRequests/{reqId} {
+      allow get: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn()
+        && isValidId(reqId)
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.type in ['export', 'correction', 'deletion']
+        && request.resource.data.status == 'pending'
+        && isNonEmptyString(request.resource.data.reason, 5, 500)
+        && request.resource.data.createdAt == request.time;
+      allow update: if isAdmin()
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.status in ['pending', 'completed', 'held_for_safeguarding', 'rejected']
+        && request.resource.data.createdAt == resource.data.createdAt;
       allow delete: if isAdmin();
     }
 
-    // -------------------------------------------------------------
-    // 8. Join Requests & Mentor Applications
-    // -------------------------------------------------------------
-    match /joinRequests/{requestId} {
-      allow create: if true;
-      allow read, update, delete: if isSafeguardingLead();
+    // =========================================================================
+    // 24. CONTACT INQUIRIES & 25. MENTOR PROGRESS REPORTS
+    // =========================================================================
+    function isValidContactMessage(data) {
+      return data.keys().hasAll(['fullName', 'email', 'phone', 'subject', 'message', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'fullName', 'email', 'phone', 'subject', 'message', 'status', 'handledBy', 'createdAt', 'updatedAt'])
+        && isNonEmptyString(data.fullName, 2, 80)
+        && isNonEmptyString(data.email, 3, 254)
+        && isNonEmptyString(data.phone, 7, 25)
+        && isNonEmptyString(data.subject, 4, 140)
+        && isNonEmptyString(data.message, 10, 1500)
+        && data.status in ['new', 'in_progress', 'resolved'];
     }
 
-    match /mentorApplications/{appId} {
-      allow create: if true;
-      allow read, update, delete: if isSafeguardingLead();
+    match /contactMessages/{msgId} {
+      allow get, list: if isCoordinator();
+      allow create: if isValidId(msgId)
+        && isValidContactMessage(request.resource.data)
+        && request.resource.data.status == 'new'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isCoordinator()
+        && isValidId(msgId)
+        && isValidContactMessage(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isAdmin();
     }
 
-    // -------------------------------------------------------------
-    // 9. Audit Log (Tamper-evident administrative audit trail)
-    // -------------------------------------------------------------
-    match /auditLog/{logId} {
-      allow read: if isAdmin();
-      // System and coordinators can append to audit log
-      allow create: if isSafeguardingLead()
-                    && request.resource.data.timestamp == request.time;
-      allow update, delete: if false; // Append-only immutable log
+    function isValidProgressReport(data) {
+      return data.keys().hasAll(['circleId', 'circleName', 'mentorId', 'mentorName', 'reportingPeriod', 'attendanceSummary', 'keyMilestones', 'safeguardingObservations', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'circleId', 'circleName', 'mentorId', 'mentorName', 'reportingPeriod', 'attendanceSummary', 'keyMilestones', 'safeguardingObservations', 'supportNeeded', 'createdAt', 'updatedAt'])
+        && isValidId(data.circleId)
+        && isNonEmptyString(data.circleName, 2, 120)
+        && isValidId(data.mentorId)
+        && isNonEmptyString(data.mentorName, 2, 80)
+        && isNonEmptyString(data.reportingPeriod, 3, 60)
+        && isNonEmptyString(data.attendanceSummary, 5, 500)
+        && isNonEmptyString(data.keyMilestones, 10, 1200)
+        && isNonEmptyString(data.safeguardingObservations, 5, 800)
+        && (!('supportNeeded' in data) || (data.supportNeeded is string && data.supportNeeded.size() <= 500));
     }
 
-    // Default Deny
+    match /progressReports/{reportId} {
+      allow get: if isCoordinator()
+        || (isSignedIn() && resource.data.mentorId == request.auth.uid)
+        || isMentorOfCircle(resource.data.circleId);
+      allow list: if isCoordinator()
+        || (isMentor() && resource.data.mentorId == request.auth.uid);
+      allow create: if isValidId(reportId)
+        && isValidProgressReport(request.resource.data)
+        && (isCoordinator() || (isMentorOfCircle(request.resource.data.circleId) && request.resource.data.mentorId == request.auth.uid))
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isCoordinator()
+        && isValidId(reportId)
+        && isValidProgressReport(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 22. DIGITAL MEMBERSHIP CARD VERIFICATIONS (QR Lookup, Zero Minor PII)
+    // =========================================================================
+    match /membershipVerifications/{cardNumber} {
+      allow get: if isValidId(cardNumber) && request.time != null;
+      allow list: if isCoordinator() || isAdmin();
+      allow create, update: if isCoordinator() || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 23. EVENT REGISTRATIONS & ATTENDANCE CHECK-IN
+    // =========================================================================
+    match /eventRegistrations/{regId} {
+      allow get: if isCoordinator()
+        || isMentor()
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      allow list: if isCoordinator()
+        || isMentor()
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      allow create: if isValidId(regId)
+        && isNonEmptyString(request.resource.data.eventId, 1, 128)
+        && isNonEmptyString(request.resource.data.attendeeName, 2, 80)
+        && request.resource.data.attendanceStatus == 'registered'
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if isCoordinator() || isMentor();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // Default Deny Everything Else
     match /{document=**} {
       allow read, write: if false;
     }

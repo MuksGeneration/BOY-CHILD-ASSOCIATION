@@ -1,30 +1,95 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    
+
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isSafeFile() {
-      return request.resource.size <= 5 * 1024 * 1024
-        && (request.resource.contentType.matches('image/(jpeg|png|webp)') 
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.role == 'admin'
+        || (request.auth.token.email == 'mukuladavid6@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isSafeguardingLead() {
+      return isAdmin()
+        || (isSignedIn() && request.auth.token.role == 'coordinator' && request.auth.token.safeguardingCleared == true);
+    }
+
+    function isCoordinator() {
+      return isAdmin() || (isSignedIn() && request.auth.token.role == 'coordinator');
+    }
+
+    function isSafeImage() {
+      return request.resource != null
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    function isSafeDocument() {
+      return request.resource != null
+        && request.resource.size <= 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/(jpeg|png|webp)')
             || request.resource.contentType == 'application/pdf');
     }
 
-    // Safeguarding documents (consent forms, referee letters)
-    match /documents/{userId}/{fileName} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || request.auth.token.role in ['coordinator', 'admin']);
-      allow write: if isSignedIn() && request.auth.uid == userId && isSafeFile();
-    }
-
-    // Private profile avatars: No photos of minors are publicly accessible
+    // 1. Private Profile Avatars: NEVER publicly accessible; restricted to owner or safeguarding leads
     match /avatars/{userId}/{fileName} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == userId && isSafeFile();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isCoordinator());
+      allow write: if isSignedIn() && request.auth.uid == userId && isSafeImage();
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isAdmin());
     }
 
-    // Default deny
+    // 2. Guardian Consent & Member Documents: Private per-user path
+    match /documents/{userId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isCoordinator());
+      allow write: if isSignedIn() && request.auth.uid == userId && isSafeDocument();
+      allow delete: if isAdmin();
+    }
+
+    // 3. Mentor Application Credentials & Referee Uploads: Strictly applicant & vetting coordinators
+    match /mentorApplications/{appId}/{fileName} {
+      allow read: if isCoordinator()
+        || (isSignedIn() && resource != null && resource.metadata.uploaderUid == request.auth.uid);
+      allow write: if isSignedIn()
+        && isSafeDocument()
+        && request.resource.metadata.uploaderUid == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // 4. Partner Verification Documents
+    match /partnerApplications/{appId}/{fileName} {
+      allow read: if isCoordinator()
+        || (isSignedIn() && resource != null && resource.metadata.uploaderUid == request.auth.uid);
+      allow write: if isSignedIn()
+        && isSafeDocument()
+        && request.resource.metadata.uploaderUid == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // 5. Confidential Safeguarding Case Attachments: ONLY safeguarding-cleared leads & admins
+    match /safeguarding/{caseId}/{fileName} {
+      allow read: if isSafeguardingLead();
+      allow write: if isSignedIn() && isSafeDocument();
+      allow delete: if isAdmin();
+    }
+
+    // 6. Published Learning Resources & CMS Media
+    match /learningResources/{resId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isCoordinator() && isSafeDocument();
+      allow delete: if isAdmin();
+    }
+
+    match /publicCms/{assetType}/{fileName} {
+      allow read: if resource != null && resource.metadata.cmsStatus == 'published';
+      allow write: if isAdmin() && isSafeImage();
+      allow delete: if isAdmin();
+    }
+
+    // Default Deny Everything Else
     match /{allPaths=**} {
       allow read, write: if false;
     }

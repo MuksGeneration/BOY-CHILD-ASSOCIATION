@@ -21,8 +21,9 @@
         "./*"
       ]
     },
+    "strict": true,
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist"]
+  "exclude": ["dist", "functions"]
 }
