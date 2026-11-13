@@ -24,7 +24,7 @@ const INITIAL_PROGRAMMES: Programme[] = [
     outcomes: ['Self-esteem and confidence', 'Conflict resolution without violence', 'Career guidance and educational grit'],
     schedule: 'Every Saturday, 10:00 AM – 12:30 PM',
     districtLocations: ['Kampala', 'Wakiso', 'Mukono', 'Jinja', 'Gulu'],
-    imagePath: '/src/assets/images/programme_mentorship_1794461658375.jpg',
+    imagePath: '/images/programme_mentorship_1794461658375.jpg',
     activeBoysCount: 420,
     availablePlaces: 35
   },
@@ -38,7 +38,7 @@ const INITIAL_PROGRAMMES: Programme[] = [
     outcomes: ['Practical electrical safety and solar tech', 'Basic computer literacy & digital problem-solving', 'Micro-business basics'],
     schedule: 'Tuesdays & Thursdays, 4:30 PM – 6:30 PM',
     districtLocations: ['Kampala', 'Jinja', 'Mbarara', 'Arua'],
-    imagePath: '/src/assets/images/programme_skills_1794461658653.jpg',
+    imagePath: '/images/programme_skills_1794461658653.jpg',
     activeBoysCount: 290,
     availablePlaces: 18
   },
@@ -52,7 +52,7 @@ const INITIAL_PROGRAMMES: Programme[] = [
     outcomes: ['Emotional expression vocabulary', 'Stress and grief management', 'Reduction in school dropouts'],
     schedule: 'Fridays, 3:00 PM – 5:30 PM & Sunday Community Matches',
     districtLocations: ['Kampala', 'Wakiso', 'Gulu', 'Mbale'],
-    imagePath: '/src/assets/images/programme_wellbeing_1794461659186.jpg',
+    imagePath: '/images/programme_wellbeing_1794461659186.jpg',
     activeBoysCount: 350,
     availablePlaces: 40
   },
@@ -66,7 +66,7 @@ const INITIAL_PROGRAMMES: Programme[] = [
     outcomes: ['Anti-bullying ambassadorship', 'Peer academic tutoring', 'Respect for women and girls advocacy'],
     schedule: 'Weekly club periods during term time',
     districtLocations: ['Kampala', 'Wakiso', 'Mukono', 'Masaka', 'Lira'],
-    imagePath: '/src/assets/images/hero_boys_circle_1794461657319.jpg',
+    imagePath: '/images/hero_boys_circle_1794461657319.jpg',
     activeBoysCount: 680,
     availablePlaces: 75
   },
@@ -80,6 +80,7 @@ const INITIAL_PROGRAMMES: Programme[] = [
     outcomes: ['Positive parenting strategies', 'Stronger child-parent communication', 'Early detection of adolescent distress'],
     schedule: 'First Sunday of each month, 2:00 PM – 4:30 PM',
     districtLocations: ['All Uganda Chapters & Virtual Dial-in'],
+    imagePath: '/images/programme_mentorship_1794461658375.jpg',
     activeBoysCount: 180,
     availablePlaces: 50
   }

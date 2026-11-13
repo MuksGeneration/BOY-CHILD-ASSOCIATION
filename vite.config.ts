@@ -46,6 +46,12 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,woff,woff2}'],
+          navigateFallbackDenylist: [
+            /^\/api/,
+            /^\/images/,
+            /^\/assets/,
+            /\.(png|jpg|jpeg|svg|webp|ico|webmanifest)$/i,
+          ],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -78,7 +84,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
           type: 'module',
         },
       }),

@@ -165,6 +165,10 @@ export const HomePage: React.FC = () => {
                   <img
                     src="/assets/aistudio/Screenshot_20260801_081145_WhatsApp__1__8a50926e.jpg"
                     alt="Boy Child Association Official Logo"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = '/logo.png';
+                    }}
                     className="w-11 h-11 object-contain rounded-full shadow-xs"
                   />
                   <div className="pr-2 text-left">
@@ -178,9 +182,9 @@ export const HomePage: React.FC = () => {
                 </div>
 
                 <img
-                  src="/src/assets/images/hero_boys_circle_1794461657319.jpg"
+                  src="/images/hero_boys_circle_1794461657319.jpg"
                   alt="Ugandan boys gathered in a supportive outdoor mentorship circle with an elder mentor"
-                  className="w-full h-80 sm:h-96 object-cover transform group-hover:scale-102 transition-transform duration-500"
+                  className="w-full h-80 sm:h-96 object-cover transform group-hover:scale-102 transition-transform duration-500 bg-[#1B365D]"
                   referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#1B365D] via-transparent to-transparent opacity-80" />
@@ -260,9 +264,9 @@ export const HomePage: React.FC = () => {
             {/* Programme 1 */}
             <div className="bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-xs flex flex-col">
               <img
-                src="/src/assets/images/programme_mentorship_1794461658375.jpg"
+                src="/images/programme_mentorship_1794461658375.jpg"
                 alt="Brothers in Purpose circle mentorship session"
-                className="w-full h-48 object-cover"
+                className="w-full h-48 object-cover bg-slate-100"
                 referrerPolicy="no-referrer"
               />
               <div className="p-6 flex-1 flex flex-col justify-between">
@@ -294,9 +298,9 @@ export const HomePage: React.FC = () => {
             {/* Programme 2 */}
             <div className="bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-xs flex flex-col">
               <img
-                src="/src/assets/images/programme_skills_1794461658653.jpg"
+                src="/images/programme_skills_1794461658653.jpg"
                 alt="Boys learning practical solar robotics and electronics"
-                className="w-full h-48 object-cover"
+                className="w-full h-48 object-cover bg-slate-100"
                 referrerPolicy="no-referrer"
               />
               <div className="p-6 flex-1 flex flex-col justify-between">
@@ -328,9 +332,9 @@ export const HomePage: React.FC = () => {
             {/* Programme 3 */}
             <div className="bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-xs flex flex-col">
               <img
-                src="/src/assets/images/programme_wellbeing_1794461659186.jpg"
+                src="/images/programme_wellbeing_1794461659186.jpg"
                 alt="Ugandan boys celebrating teamwork during sports wellbeing session"
-                className="w-full h-48 object-cover"
+                className="w-full h-48 object-cover bg-slate-100"
                 referrerPolicy="no-referrer"
               />
               <div className="p-6 flex-1 flex flex-col justify-between">
