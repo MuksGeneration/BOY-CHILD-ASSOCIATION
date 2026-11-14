@@ -12,10 +12,13 @@
         "email": { "type": "string" },
         "fullName": { "type": "string" },
         "phone": { "type": "string" },
-        "role": { "type": "string", "enum": ["boy", "guardian", "mentor", "partner", "coordinator", "admin"] },
+        "role": { "type": "string", "enum": ["boy", "guardian", "mentor", "partner", "coordinator", "instructor", "learning_manager", "admin"] },
         "status": { "type": "string", "enum": ["active", "pending_guardian_consent", "pending_vetting", "suspended"] },
         "ageCategory": { "type": "string", "enum": ["child_5_17", "young_adult_18_35", "adult"] },
         "safeguardingCleared": { "type": "boolean" },
+        "instructorAuthorized": { "type": "boolean" },
+        "instructorBio": { "type": "string" },
+        "instructorSpecialty": { "type": "string" },
         "assignedCaseIds": { "type": "array" },
         "membershipNumber": { "type": "string" },
         "membershipIssuedAt": { "type": "string" },
@@ -502,6 +505,365 @@
         "updatedAt": { "type": "timestamp" }
       },
       "required": ["circleId", "mentorId", "reportingPeriod", "attendanceSummary", "keyMilestones", "safeguardingObservations", "createdAt", "updatedAt"]
+    },
+    "courses": {
+      "description": "LMS online skilling courses with approval workflow and age eligibility.",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "category": { "type": "string" },
+        "learningObjectives": { "type": "array" },
+        "targetAudience": { "type": "string" },
+        "ageEligibility": { "type": "string", "enum": ["all_5_35", "children_5_17", "young_adults_18_35", "adults_18_plus"] },
+        "level": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] },
+        "durationHours": { "type": "number" },
+        "prerequisites": { "type": "array" },
+        "instructorIds": { "type": "array" },
+        "instructorNames": { "type": "array" },
+        "learningFormat": { "type": "string", "enum": ["self_paced", "instructor_led", "blended"] },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "enrolmentCapacity": { "type": "number" },
+        "enrolledCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "pending_approval", "published", "unpublished", "archived"] },
+        "approvalNotes": { "type": "string" },
+        "approvedBy": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["title", "category", "level", "learningFormat", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "courseModules": {
+      "description": "Ordered modules within an LMS course.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "orderIndex": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "title", "orderIndex", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "courseLessons": {
+      "description": "Lessons within a module supporting video, PDF, presentations, audio, text, and transcripts.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "title": { "type": "string" },
+        "lessonType": { "type": "string", "enum": ["video", "pdf", "presentation", "audio", "text", "practical_demo", "external_resource", "study_notes"] },
+        "orderIndex": { "type": "number" },
+        "durationMinutes": { "type": "number" },
+        "isRequired": { "type": "boolean" },
+        "prerequisiteLessonId": { "type": "string" },
+        "objectives": { "type": "array" },
+        "instructorNotes": { "type": "string" },
+        "textContent": { "type": "string" },
+        "transcript": { "type": "string" },
+        "externalUrl": { "type": "string" },
+        "primaryAssetId": { "type": "string" },
+        "lowBandwidthAssetId": { "type": "string" },
+        "captionsAssetId": { "type": "string" },
+        "studyNotesAssetId": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "moduleId", "title", "lessonType", "orderIndex", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "courseAssets": {
+      "description": "Private course media file metadata pointing to Firebase Cloud Storage.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "sizeBytes": { "type": "number" },
+        "assetKind": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "provider": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["private_enrolled", "course_thumbnail"] },
+        "uploadedBy": { "type": "string" },
+        "uploadedByName": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "fileName", "mimeType", "sizeBytes", "storagePath", "visibility", "uploadedBy", "createdAt", "updatedAt"]
+    },
+    "instructorAssignments": {
+      "description": "Explicit course-level instructor/mentor teaching authorizations.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "instructorUid": { "type": "string" },
+        "instructorName": { "type": "string" },
+        "roleType": { "type": "string", "enum": ["lead_instructor", "co_instructor"] },
+        "assignedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "revoked"] },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "instructorUid", "roleType", "assignedBy", "status", "createdAt", "updatedAt"]
+    },
+    "courseEnrollments": {
+      "description": "Learner course enrolments with minor guardian consent verification and aggregated progress.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "userId": { "type": "string" },
+        "learnerName": { "type": "string" },
+        "learnerDistrict": { "type": "string" },
+        "ageCategory": { "type": "string" },
+        "isMinor": { "type": "boolean" },
+        "guardianConsentVerified": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "enrolled", "completed", "withdrawn"] },
+        "progressPercent": { "type": "number" },
+        "completedLessonsCount": { "type": "number" },
+        "totalLessonsCount": { "type": "number" },
+        "learningMinutes": { "type": "number" },
+        "enrolledAt": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "userId", "status", "progressPercent", "createdAt", "updatedAt"]
+    },
+    "lessonProgress": {
+      "description": "Per-learner lesson completion, playback speed, and resume watch position.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "userId": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "lastPositionSeconds": { "type": "number" },
+        "watchedSeconds": { "type": "number" },
+        "playbackSpeed": { "type": "number" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "lessonId", "userId", "completed", "updatedAt"]
+    },
+    "assessments": {
+      "description": "Quizzes, pre/post-course tests, and written/file assignments.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "title": { "type": "string" },
+        "assessmentType": { "type": "string", "enum": ["pre_course", "post_course", "quiz", "written_assignment", "file_assignment"] },
+        "instructions": { "type": "string" },
+        "passMarkPercent": { "type": "number" },
+        "maxAttempts": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "title", "assessmentType", "passMarkPercent", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "assessmentQuestions": {
+      "description": "Assessment question prompts and options without exposing answer keys.",
+      "properties": {
+        "id": { "type": "string" },
+        "assessmentId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "orderIndex": { "type": "number" },
+        "questionType": { "type": "string", "enum": ["mcq", "true_false", "short_answer", "written"] },
+        "prompt": { "type": "string" },
+        "options": { "type": "array" },
+        "points": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["assessmentId", "courseId", "questionType", "prompt", "points", "createdBy", "createdAt", "updatedAt"]
+    },
+    "assessmentAnswerKeys": {
+      "description": "Restricted answer keys readable only by assigned instructors, learning managers, and admins.",
+      "properties": {
+        "questionId": { "type": "string" },
+        "assessmentId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "correctOptionIndex": { "type": "number" },
+        "correctBoolean": { "type": "boolean" },
+        "expectedKeywords": { "type": "array" },
+        "explanation": { "type": "string" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["questionId", "assessmentId", "courseId", "updatedAt"]
+    },
+    "assessmentAttempts": {
+      "description": "Learner quiz/test attempts and computed grades.",
+      "properties": {
+        "id": { "type": "string" },
+        "assessmentId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "userId": { "type": "string" },
+        "learnerName": { "type": "string" },
+        "attemptNumber": { "type": "number" },
+        "answers": { "type": "object" },
+        "scorePercent": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["submitted", "graded"] },
+        "submittedAt": { "type": "timestamp" }
+      },
+      "required": ["assessmentId", "courseId", "userId", "scorePercent", "status", "submittedAt"]
+    },
+    "assignmentSubmissions": {
+      "description": "Written and uploaded file assignments submitted by learners.",
+      "properties": {
+        "id": { "type": "string" },
+        "assessmentId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "userId": { "type": "string" },
+        "learnerName": { "type": "string" },
+        "submissionText": { "type": "string" },
+        "fileAssetPath": { "type": "string" },
+        "status": { "type": "string", "enum": ["submitted", "graded", "resubmit_requested"] },
+        "scorePercent": { "type": "number" },
+        "instructorFeedback": { "type": "string" },
+        "submittedAt": { "type": "timestamp" }
+      },
+      "required": ["assessmentId", "courseId", "userId", "status", "submittedAt"]
+    },
+    "courseSessions": {
+      "description": "Scheduled online live sessions aligned with Africa/Kampala timezone.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "title": { "type": "string" },
+        "instructorUid": { "type": "string" },
+        "scheduledDate": { "type": "string" },
+        "startTimeKampala": { "type": "string" },
+        "startsAtIso": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "timezone": { "type": "string" },
+        "zoomMeetingDocId": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "live", "completed", "cancelled"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "title", "startsAtIso", "durationMinutes", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "zoomMeetings": {
+      "description": "Non-secret Zoom meeting metadata linking live sessions to Zoom Cloud meetings.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "zoomMeetingId": { "type": "string" },
+        "topic": { "type": "string" },
+        "startTimeUtc": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "timezone": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "started", "ended", "cancelled"] },
+        "waitingRoom": { "type": "boolean" },
+        "joinBeforeHost": { "type": "boolean" },
+        "recordingEnabled": { "type": "boolean" },
+        "mode": { "type": "string", "enum": ["zoom_api", "manual_fallback"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "sessionId", "zoomMeetingId", "topic", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "zoomMeetingSecrets": {
+      "description": "Strictly backend-only Zoom host startUrl, joinUrl, and passcode secrets.",
+      "properties": {
+        "meetingDocId": { "type": "string" },
+        "joinUrl": { "type": "string" },
+        "startUrl": { "type": "string" },
+        "passcode": { "type": "string" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["meetingDocId", "joinUrl", "updatedAt"]
+    },
+    "sessionAttendance": {
+      "description": "Manual and automated attendance records for live online classes.",
+      "properties": {
+        "id": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "userId": { "type": "string" },
+        "learnerName": { "type": "string" },
+        "status": { "type": "string", "enum": ["present", "absent", "excused"] },
+        "markedBy": { "type": "string" },
+        "recordedAt": { "type": "timestamp" }
+      },
+      "required": ["sessionId", "courseId", "userId", "status", "markedBy", "recordedAt"]
+    },
+    "courseAnnouncements": {
+      "description": "Course-scoped instructor and learning manager announcements.",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "priority": { "type": "string", "enum": ["normal", "urgent"] },
+        "authorUid": { "type": "string" },
+        "authorName": { "type": "string" },
+        "createdAt": { "type": "timestamp" }
+      },
+      "required": ["courseId", "title", "message", "authorUid", "createdAt"]
+    },
+    "certificates": {
+      "description": "Issued digital completion certificates with QR verification tokens and revocation support.",
+      "properties": {
+        "id": { "type": "string" },
+        "certificateNumber": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "userId": { "type": "string" },
+        "learnerDisplayName": { "type": "string" },
+        "completionDate": { "type": "string" },
+        "qrToken": { "type": "string" },
+        "status": { "type": "string", "enum": ["issued", "revoked"] },
+        "issuedAt": { "type": "string" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["certificateNumber", "courseId", "userId", "status", "qrToken", "updatedAt"]
+    },
+    "certificateVerifications": {
+      "description": "Privacy-safe exact-ID public verification lookup for digital certificates (zero minor PII).",
+      "properties": {
+        "certificateNumber": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "learnerDisplayName": { "type": "string" },
+        "completionDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["issued", "revoked"] },
+        "qrToken": { "type": "string" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["certificateNumber", "courseTitle", "status", "qrToken", "updatedAt"]
+    },
+    "learningNotifications": {
+      "description": "LMS notifications for enrolments, 24h/1h live class reminders, grades, and certificates.",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "category": { "type": "string", "enum": ["enrolment", "live_class_reminder", "assessment", "certificate", "announcement"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" }
+      },
+      "required": ["userId", "title", "message", "category", "read", "createdAt"]
     }
   }
 }

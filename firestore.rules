@@ -103,6 +103,45 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/guardianLinks/$(request.auth.uid + '_' + boyId)).data.status == 'verified';
     }
 
+    function isLearningManager() {
+      return isAdmin()
+        || (isSignedIn() && request.auth.token.role == 'learning_manager')
+        || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && getUserDoc().role == 'learning_manager'
+            && getUserDoc().status == 'active');
+    }
+
+    function isInstructor() {
+      return isLearningManager()
+        || (isSignedIn() && (
+          request.auth.token.role == 'instructor'
+          || (request.auth.token.role == 'mentor' && request.auth.token.get('instructorAuthorized', false) == true)
+          || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+              && getUserDoc().status == 'active'
+              && (getUserDoc().role == 'instructor'
+                  || (getUserDoc().role == 'mentor' && getUserDoc().get('instructorAuthorized', false) == true)))
+        ));
+    }
+
+    function isAssignedInstructor(courseId) {
+      return isLearningManager()
+        || (isInstructor()
+            && isValidId(courseId)
+            && ((exists(/databases/$(database)/documents/instructorAssignments/$(courseId + '_' + request.auth.uid))
+                  && get(/databases/$(database)/documents/instructorAssignments/$(courseId + '_' + request.auth.uid)).data.status == 'active')
+                || (exists(/databases/$(database)/documents/courses/$(courseId))
+                    && (get(/databases/$(database)/documents/courses/$(courseId)).data.createdBy == request.auth.uid
+                        || (get(/databases/$(database)/documents/courses/$(courseId)).data.instructorIds is list
+                            && request.auth.uid in get(/databases/$(database)/documents/courses/$(courseId)).data.instructorIds)))));
+    }
+
+    function isEnrolledInCourse(courseId) {
+      return isSignedIn()
+        && isValidId(courseId)
+        && exists(/databases/$(database)/documents/courseEnrollments/$(courseId + '_' + request.auth.uid))
+        && get(/databases/$(database)/documents/courseEnrollments/$(courseId + '_' + request.auth.uid)).data.status in ['approved', 'enrolled', 'completed'];
+    }
+
     function isMentorOfCircle(circleId) {
       return isMentor()
         && circleId is string
@@ -148,6 +187,7 @@ service cloud.firestore {
         && request.resource.data.role == resource.data.role
         && request.resource.data.status == resource.data.status
         && request.resource.data.get('safeguardingCleared', false) == resource.data.get('safeguardingCleared', false)
+        && request.resource.data.get('instructorAuthorized', false) == resource.data.get('instructorAuthorized', false)
         && request.resource.data.get('assignedCaseIds', []) == resource.data.get('assignedCaseIds', [])
         && request.resource.data.get('membershipNumber', null) == resource.data.get('membershipNumber', null)
         && request.resource.data.get('membershipQrToken', null) == resource.data.get('membershipQrToken', null)
@@ -651,6 +691,349 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time;
 
       allow update: if isCoordinator() || isMentor();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // =========================================================================
+    // 26. LMS COURSES, MODULES, LESSONS & MEDIA ASSETS
+    // =========================================================================
+    match /courses/{courseId} {
+      allow get: if resource.data.status == 'published'
+        || isLearningManager()
+        || (isInstructor() && (resource.data.createdBy == request.auth.uid || (resource.data.instructorIds is list && request.auth.uid in resource.data.instructorIds)));
+
+      allow list: if resource.data.status == 'published'
+        || isLearningManager()
+        || (isInstructor() && (resource.data.createdBy == request.auth.uid || (resource.data.instructorIds is list && request.auth.uid in resource.data.instructorIds)));
+
+      allow create: if isValidId(courseId)
+        && isInstructor()
+        && isNonEmptyString(request.resource.data.title, 3, 160)
+        && request.resource.data.level in ['beginner', 'intermediate', 'advanced']
+        && request.resource.data.learningFormat in ['self_paced', 'instructor_led', 'blended']
+        && request.resource.data.status in ['draft', 'pending_approval']
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isValidId(courseId) && (
+        isLearningManager()
+        || (isAssignedInstructor(courseId)
+            && request.resource.data.status in ['draft', 'pending_approval', resource.data.status]
+            && request.resource.data.status != 'published'
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.updatedAt == request.time)
+      );
+
+      allow delete: if isAdmin() || (isLearningManager() && resource.data.status == 'draft');
+    }
+
+    match /courseModules/{moduleId} {
+      allow get: if resource.data.status == 'published'
+        || isLearningManager()
+        || isAssignedInstructor(resource.data.courseId);
+
+      allow list: if resource.data.status == 'published'
+        || isLearningManager()
+        || (isInstructor() && resource.data.createdBy == request.auth.uid);
+
+      allow create: if isValidId(moduleId)
+        && isAssignedInstructor(request.resource.data.courseId)
+        && isNonEmptyString(request.resource.data.title, 2, 160)
+        && request.resource.data.status in ['draft', 'published']
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isValidId(moduleId)
+        && isAssignedInstructor(resource.data.courseId)
+        && request.resource.data.courseId == resource.data.courseId
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+    }
+
+    match /courseLessons/{lessonId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (resource.data.status == 'published' && isEnrolledInCourse(resource.data.courseId));
+
+      allow list: if isLearningManager()
+        || (isInstructor() && resource.data.createdBy == request.auth.uid)
+        || (isSignedIn() && resource.data.status == 'published' && isValidId(resource.data.courseId));
+
+      allow create: if isValidId(lessonId)
+        && isAssignedInstructor(request.resource.data.courseId)
+        && isNonEmptyString(request.resource.data.title, 2, 160)
+        && request.resource.data.status in ['draft', 'published']
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isValidId(lessonId)
+        && isAssignedInstructor(resource.data.courseId)
+        && request.resource.data.courseId == resource.data.courseId
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+    }
+
+    match /courseAssets/{assetId} {
+      allow get: if resource.data.visibility == 'course_thumbnail'
+        || isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || isEnrolledInCourse(resource.data.courseId);
+
+      allow list: if resource.data.visibility == 'course_thumbnail'
+        || isLearningManager()
+        || (isInstructor() && resource.data.uploadedBy == request.auth.uid)
+        || (isSignedIn() && isValidId(resource.data.courseId));
+
+      allow create: if isValidId(assetId)
+        && isAssignedInstructor(request.resource.data.courseId)
+        && request.resource.data.uploadedBy == request.auth.uid
+        && request.resource.data.sizeBytes is number
+        && request.resource.data.sizeBytes > 0
+        && request.resource.data.sizeBytes <= 524288000
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+      allow delete: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+    }
+
+    match /instructorAssignments/{assignId} {
+      allow get: if isLearningManager()
+        || (isSignedIn() && resource.data.instructorUid == request.auth.uid);
+
+      allow list: if isLearningManager()
+        || (isSignedIn() && resource.data.instructorUid == request.auth.uid);
+
+      allow create, update, delete: if isLearningManager();
+    }
+
+    // =========================================================================
+    // 27. ENROLMENTS, LESSON PROGRESS, ASSESSMENTS & GRADING
+    // =========================================================================
+    match /courseEnrollments/{enrollId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || isVerifiedGuardianOf(resource.data.userId);
+
+      allow list: if isLearningManager()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (isSignedIn() && isGuardian() && resource.data.isMinor == true)
+        || (isInstructor() && isValidId(resource.data.courseId));
+
+      allow create: if isValidId(enrollId) && (
+        isLearningManager()
+        || (isActiveAccount()
+            && enrollId == request.resource.data.courseId + '_' + request.auth.uid
+            && request.resource.data.userId == request.auth.uid
+            && (!request.resource.data.isMinor || request.resource.data.guardianConsentVerified == true)
+            && request.resource.data.status in ['pending', 'enrolled']
+            && request.resource.data.progressPercent == 0
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.updatedAt == request.time)
+      );
+
+      allow update: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (isOwner(resource.data.userId)
+            && isActiveAccount()
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.courseId == resource.data.courseId
+            && request.resource.data.progressPercent >= 0
+            && request.resource.data.progressPercent <= 100
+            && request.resource.data.updatedAt == request.time);
+
+      allow delete: if isAdmin();
+    }
+
+    match /lessonProgress/{progressId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || isVerifiedGuardianOf(resource.data.userId);
+
+      allow list: if isLearningManager()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (isInstructor() && isValidId(resource.data.courseId));
+
+      allow create, update: if isValidId(progressId) && (
+        isLearningManager()
+        || (isActiveAccount()
+            && request.resource.data.userId == request.auth.uid
+            && isEnrolledInCourse(request.resource.data.courseId))
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    match /assessments/{assessmentId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (resource.data.status == 'published' && isEnrolledInCourse(resource.data.courseId));
+
+      allow list: if isLearningManager()
+        || (isInstructor() && resource.data.createdBy == request.auth.uid)
+        || (isSignedIn() && resource.data.status == 'published' && isValidId(resource.data.courseId));
+
+      allow create, update: if isValidId(assessmentId)
+        && (isLearningManager() || isAssignedInstructor(request.resource.data.courseId));
+
+      allow delete: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+    }
+
+    match /assessmentQuestions/{questionId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || isEnrolledInCourse(resource.data.courseId);
+
+      allow list: if isLearningManager()
+        || (isInstructor() && resource.data.createdBy == request.auth.uid)
+        || (isSignedIn() && isValidId(resource.data.courseId));
+
+      allow create, update: if isValidId(questionId)
+        && (isLearningManager() || isAssignedInstructor(request.resource.data.courseId));
+
+      allow delete: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+    }
+
+    // Strictly confidential answer keys: NEVER readable by learners or public
+    match /assessmentAnswerKeys/{questionId} {
+      allow get: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+      allow list: if isLearningManager() || (isInstructor() && isValidId(resource.data.courseId));
+      allow create, update: if isLearningManager() || isAssignedInstructor(request.resource.data.courseId);
+      allow delete: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+    }
+
+    match /assessmentAttempts/{attemptId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || isVerifiedGuardianOf(resource.data.userId);
+
+      allow list: if isLearningManager()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (isInstructor() && isValidId(resource.data.courseId));
+
+      allow create: if isValidId(attemptId)
+        && isActiveAccount()
+        && request.resource.data.userId == request.auth.uid
+        && isEnrolledInCourse(request.resource.data.courseId);
+
+      allow update: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+      allow delete: if isAdmin();
+    }
+
+    match /assignmentSubmissions/{subId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      allow list: if isLearningManager()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (isInstructor() && isValidId(resource.data.courseId));
+
+      allow create: if isValidId(subId)
+        && isActiveAccount()
+        && request.resource.data.userId == request.auth.uid
+        && isEnrolledInCourse(request.resource.data.courseId);
+
+      allow update: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 28. LIVE SESSIONS, ZOOM MEETINGS, ATTENDANCE & CERTIFICATES
+    // =========================================================================
+    match /courseSessions/{sessionId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || isEnrolledInCourse(resource.data.courseId);
+
+      allow list: if isLearningManager()
+        || (isInstructor() && resource.data.createdBy == request.auth.uid)
+        || (isSignedIn() && isValidId(resource.data.courseId));
+
+      allow create, update: if isValidId(sessionId)
+        && (isLearningManager() || isAssignedInstructor(request.resource.data.courseId));
+
+      allow delete: if isLearningManager() || isAssignedInstructor(resource.data.courseId);
+    }
+
+    match /zoomMeetings/{meetingId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || isEnrolledInCourse(resource.data.courseId);
+
+      allow list: if isLearningManager()
+        || (isInstructor() && resource.data.createdBy == request.auth.uid)
+        || (isSignedIn() && isValidId(resource.data.courseId));
+
+      allow create, update: if isLearningManager() || isAssignedInstructor(request.resource.data.courseId);
+      allow delete: if isLearningManager();
+    }
+
+    // Backend Cloud Functions Admin SDK ONLY (holds joinUrl, startUrl, passcode)
+    match /zoomMeetingSecrets/{meetingId} {
+      allow read, write: if false;
+    }
+
+    match /sessionAttendance/{attId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || isVerifiedGuardianOf(resource.data.userId);
+
+      allow list: if isLearningManager()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (isInstructor() && isValidId(resource.data.courseId));
+
+      allow create, update: if isLearningManager() || isAssignedInstructor(request.resource.data.courseId);
+      allow delete: if isAdmin();
+    }
+
+    match /courseAnnouncements/{annId} {
+      allow get: if isLearningManager()
+        || isAssignedInstructor(resource.data.courseId)
+        || isEnrolledInCourse(resource.data.courseId);
+
+      allow list: if isLearningManager()
+        || (isInstructor() && resource.data.authorUid == request.auth.uid)
+        || (isSignedIn() && isValidId(resource.data.courseId));
+
+      allow create, update, delete: if isLearningManager() || isAssignedInstructor(request.resource.data.courseId);
+    }
+
+    match /certificates/{certId} {
+      allow get: if isLearningManager()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || isVerifiedGuardianOf(resource.data.userId);
+
+      allow list: if isLearningManager()
+        || (isSignedIn() && resource.data.userId == request.auth.uid)
+        || (isSignedIn() && isGuardian());
+
+      allow create, update: if isLearningManager();
+      allow delete: if isAdmin();
+    }
+
+    match /certificateVerifications/{certificateNumber} {
+      allow get: if isValidId(certificateNumber) && request.time != null;
+      allow list: if isLearningManager();
+      allow create, update: if isLearningManager();
+      allow delete: if isAdmin();
+    }
+
+    match /learningNotifications/{notifId} {
+      allow get: if isLearningManager() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow list: if isLearningManager() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isLearningManager() || isInstructor();
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
       allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 

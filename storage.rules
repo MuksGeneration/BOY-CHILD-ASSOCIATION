@@ -22,10 +22,22 @@ service firebase.storage {
       return isAdmin() || (isSignedIn() && request.auth.token.role == 'coordinator');
     }
 
+    function isLearningManager() {
+      return isAdmin() || (isSignedIn() && request.auth.token.role == 'learning_manager');
+    }
+
+    function isInstructorOrManager() {
+      return isLearningManager()
+        || (isSignedIn() && (
+          request.auth.token.role == 'instructor'
+          || (request.auth.token.role == 'mentor' && request.auth.token.instructorAuthorized == true)
+        ));
+    }
+
     function isSafeImage() {
       return request.resource != null
-        && request.resource.size <= 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp|gif)');
     }
 
     function isSafeDocument() {
@@ -33,6 +45,37 @@ service firebase.storage {
         && request.resource.size <= 10 * 1024 * 1024
         && (request.resource.contentType.matches('image/(jpeg|png|webp)')
             || request.resource.contentType == 'application/pdf');
+    }
+
+    function isSafeLmsCourseMedia() {
+      return request.resource != null
+        && (
+          (request.resource.contentType.matches('video/(mp4|webm|quicktime)') && request.resource.size <= 500 * 1024 * 1024)
+          || (request.resource.contentType.matches('audio/(mpeg|mp3|wav|ogg|aac|mp4|webm)') && request.resource.size <= 80 * 1024 * 1024)
+          || (request.resource.contentType == 'application/pdf' && request.resource.size <= 40 * 1024 * 1024)
+          || (request.resource.contentType in [
+                'application/vnd.ms-powerpoint',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+              ] && request.resource.size <= 50 * 1024 * 1024)
+          || (request.resource.contentType in [
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              ] && request.resource.size <= 30 * 1024 * 1024)
+          || (request.resource.contentType.matches('image/(jpeg|png|webp)') && request.resource.size <= 10 * 1024 * 1024)
+          || (request.resource.contentType in ['text/vtt', 'text/plain', 'application/x-subrip'] && request.resource.size <= 2 * 1024 * 1024)
+        );
+    }
+
+    function isSafeSubmissionFile() {
+      return request.resource != null
+        && request.resource.size <= 30 * 1024 * 1024
+        && (request.resource.contentType == 'application/pdf'
+            || request.resource.contentType.matches('image/(jpeg|png|webp)')
+            || request.resource.contentType in [
+              'application/msword',
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            ]);
     }
 
     // 1. Private Profile Avatars: NEVER publicly accessible; restricted to owner or safeguarding leads
@@ -87,6 +130,32 @@ service firebase.storage {
       allow read: if resource != null && resource.metadata.cmsStatus == 'published';
       allow write: if isAdmin() && isSafeImage();
       allow delete: if isAdmin();
+    }
+
+    // 7. LMS Course Thumbnails (signed-in read or published course thumbnail metadata)
+    match /lms/courses/{courseId}/thumbnails/{fileName} {
+      allow read: if isSignedIn() || (resource != null && resource.metadata.cmsStatus == 'published');
+      allow write: if isInstructorOrManager() && isSafeImage();
+      allow delete: if isInstructorOrManager();
+    }
+
+    // 8. Private LMS Course Media Assets (Videos, PDFs, Slides, Audio, Notes, VTT Captions)
+    // Enrolment/authorized access verified via getAuthorizedMediaUrl Cloud Function or Firestore-authenticated session.
+    match /lms/courses/{courseId}/modules/{moduleId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isInstructorOrManager()
+        && isSafeLmsCourseMedia()
+        && request.resource.metadata.uploaderUid == request.auth.uid;
+      allow delete: if isInstructorOrManager();
+    }
+
+    // 9. Private Learner Assignment Submissions
+    match /lms/submissions/{courseId}/{userId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isInstructorOrManager());
+      allow write: if isSignedIn()
+        && request.auth.uid == userId
+        && isSafeSubmissionFile();
+      allow delete: if isLearningManager() || (isSignedIn() && request.auth.uid == userId);
     }
 
     // Default Deny Everything Else

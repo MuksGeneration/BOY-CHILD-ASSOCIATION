@@ -25,9 +25,17 @@ export const Navbar: React.FC = () => {
 
   const showDemoSwitcher = isDemoModeEnabled && !isLiveFirebaseUser;
 
+  const canInstruct =
+    role === 'instructor' ||
+    role === 'learning_manager' ||
+    role === 'admin' ||
+    (role === 'mentor' && Boolean(user?.instructorAuthorized));
+
   const roleDashboardLink = (() => {
     if (role === 'guardian') return { label: 'Guardian Portal', path: '/guardian' };
     if (role === 'mentor') return { label: 'Mentor Portal', path: '/mentor' };
+    if (role === 'instructor') return { label: 'Instructor Studio', path: '/instructor' };
+    if (role === 'learning_manager') return { label: 'Learning Dept', path: '/learning-manager' };
     if (role === 'partner') return { label: 'Partner Portal', path: '/partner' };
     if (role === 'coordinator') return { label: 'Coordinator', path: '/coordinator' };
     if (role === 'admin') return { label: 'Admin Console', path: '/admin' };
@@ -36,15 +44,21 @@ export const Navbar: React.FC = () => {
 
   const navLinks = [
     { label: 'Programmes', path: '/programmes' },
-    { label: 'Circles', path: '/mentorship-circles' },
+    { label: 'Online Skilling', path: '/learn' },
     { label: 'Join BCA', path: '/join' },
     { label: 'Events', path: '/events-news' },
     ...(user ? [roleDashboardLink] : [{ label: 'National Overview', path: '/national-dashboard' }]),
   ];
 
   const exploreLinks = [
+    { label: 'Mentorship Circles', path: '/mentorship-circles' },
     { label: 'National Overview', path: '/national-dashboard' },
     { label: 'Verify Member QR', path: '/verify' },
+    { label: 'Verify Certificate', path: '/verify-certificate' },
+    ...(canInstruct ? [{ label: 'Instructor Studio', path: '/instructor' }] : []),
+    ...(role === 'learning_manager' || role === 'admin'
+      ? [{ label: 'Learning Department', path: '/learning-manager' }]
+      : []),
     { label: 'About BCA', path: '/about' },
     { label: 'Mission & Pillars', path: '/mission-vision' },
     { label: 'School Partnerships', path: '/school-partnerships' },
@@ -61,6 +75,8 @@ export const Navbar: React.FC = () => {
     boy: 'bg-blue-50 text-[#005A9C] border-blue-200',
     guardian: 'bg-emerald-50 text-emerald-800 border-emerald-200',
     mentor: 'bg-purple-50 text-purple-800 border-purple-200',
+    instructor: 'bg-teal-50 text-teal-900 border-teal-200',
+    learning_manager: 'bg-sky-50 text-sky-900 border-sky-200',
     coordinator: 'bg-amber-50 text-amber-900 border-amber-200',
     admin: 'bg-indigo-50 text-indigo-900 border-indigo-200',
     partner: 'bg-cyan-50 text-cyan-900 border-cyan-200',
@@ -238,6 +254,31 @@ export const Navbar: React.FC = () => {
                       >
                         Open {roleDashboardLink.label} &rarr;
                       </Link>
+                      <Link
+                        to="/learn"
+                        onClick={() => setPersonaMenuOpen(false)}
+                        className="block py-1 text-xs font-semibold text-[#005A9C] hover:underline"
+                      >
+                        Online Skilling Academy &rarr;
+                      </Link>
+                      {canInstruct && role !== 'instructor' && (
+                        <Link
+                          to="/instructor"
+                          onClick={() => setPersonaMenuOpen(false)}
+                          className="block py-1 text-xs font-semibold text-teal-800 hover:underline"
+                        >
+                          Instructor Studio &rarr;
+                        </Link>
+                      )}
+                      {(role === 'learning_manager' || role === 'admin') && role !== 'learning_manager' && (
+                        <Link
+                          to="/learning-manager"
+                          onClick={() => setPersonaMenuOpen(false)}
+                          className="block py-1 text-xs font-semibold text-sky-800 hover:underline"
+                        >
+                          Learning Department &rarr;
+                        </Link>
+                      )}
                       {(role === 'admin' || (role === 'coordinator' && user?.safeguardingCleared)) && (
                         <Link
                           to="/safeguarding-command"
@@ -247,7 +288,7 @@ export const Navbar: React.FC = () => {
                           Safeguarding Command Centre &rarr;
                         </Link>
                       )}
-                      <div className="flex items-center justify-center gap-3 pt-1">
+                      <div className="flex items-center justify-center gap-2.5 pt-1 flex-wrap">
                         <Link
                           to="/national-dashboard"
                           onClick={() => setPersonaMenuOpen(false)}
@@ -261,7 +302,15 @@ export const Navbar: React.FC = () => {
                           onClick={() => setPersonaMenuOpen(false)}
                           className="text-[11px] font-semibold text-slate-600 hover:text-[#005A9C]"
                         >
-                          Verify Card QR
+                          Verify Card
+                        </Link>
+                        <span className="text-slate-300">·</span>
+                        <Link
+                          to="/verify-certificate"
+                          onClick={() => setPersonaMenuOpen(false)}
+                          className="text-[11px] font-semibold text-slate-600 hover:text-[#005A9C]"
+                        >
+                          Verify Cert
                         </Link>
                       </div>
                       {showDemoSwitcher ? (

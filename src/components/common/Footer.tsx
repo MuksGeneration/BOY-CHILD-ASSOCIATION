@@ -56,6 +56,11 @@ export const Footer: React.FC = () => {
                 <Link to="/life-skills" className="hover:text-white transition-colors">Life Skills &amp; Character</Link>
               </li>
               <li>
+                <Link to="/learn" className="hover:text-white transition-colors font-semibold text-[#60C1E5]">
+                  Online Skilling Academy (LMS)
+                </Link>
+              </li>
+              <li>
                 <Link to="/education-career" className="hover:text-white transition-colors">Education &amp; Career</Link>
               </li>
               <li>
@@ -69,6 +74,9 @@ export const Footer: React.FC = () => {
               </li>
               <li>
                 <Link to="/verify" className="hover:text-white transition-colors">Verify Membership Card (QR)</Link>
+              </li>
+              <li>
+                <Link to="/verify-certificate" className="hover:text-white transition-colors">Verify Course Certificate</Link>
               </li>
             </ul>
           </div>

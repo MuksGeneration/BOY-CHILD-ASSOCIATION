@@ -637,4 +637,137 @@ export function validateDocumentFile(file: { type: string; size: number; name?: 
   return { valid: true };
 }
 
+/**
+ * LMS Media Validation (separate from 5 MB avatar limit — supports Video, Audio, Slides, Docs, Captions)
+ */
+export const LMS_MEDIA_LIMITS_BYTES = {
+  video: 500 * 1024 * 1024, // 500 MB resumable video upload
+  low_bandwidth_video: 120 * 1024 * 1024, // 120 MB compressed video
+  audio: 80 * 1024 * 1024, // 80 MB
+  presentation: 50 * 1024 * 1024, // 50 MB PPT/PPTX
+  pdf: 40 * 1024 * 1024, // 40 MB PDF
+  document: 30 * 1024 * 1024, // 30 MB DOC/DOCX
+  image: 10 * 1024 * 1024, // 10 MB thumbnail/diagram
+  captions: 2 * 1024 * 1024, // 2 MB VTT/TXT
+} as const;
+
+export const ALLOWED_LMS_MIME_MAP: Record<string, keyof typeof LMS_MEDIA_LIMITS_BYTES> = {
+  'video/mp4': 'video',
+  'video/webm': 'video',
+  'audio/mpeg': 'audio',
+  'audio/mp3': 'audio',
+  'audio/wav': 'audio',
+  'audio/ogg': 'audio',
+  'audio/aac': 'audio',
+  'audio/mp4': 'audio',
+  'audio/webm': 'audio',
+  'application/pdf': 'pdf',
+  'application/vnd.ms-powerpoint': 'presentation',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'presentation',
+  'application/msword': 'document',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'document',
+  'image/jpeg': 'image',
+  'image/png': 'image',
+  'image/webp': 'image',
+  'text/vtt': 'captions',
+  'text/plain': 'captions',
+};
+
+export function validateLmsMediaFile(
+  file: { type: string; size: number; name?: string },
+  preferredKind?: keyof typeof LMS_MEDIA_LIMITS_BYTES
+): { valid: boolean; detectedKind?: keyof typeof LMS_MEDIA_LIMITS_BYTES; error?: string } {
+  const mime = file.type || '';
+  const detected = ALLOWED_LMS_MIME_MAP[mime];
+  const ext = (file.name || '').split('.').pop()?.toLowerCase();
+
+  let resolvedKind = detected;
+  if (!resolvedKind && ext === 'vtt') resolvedKind = 'captions';
+  if (!resolvedKind && (ext === 'ppt' || ext === 'pptx')) resolvedKind = 'presentation';
+  if (!resolvedKind && (ext === 'doc' || ext === 'docx')) resolvedKind = 'document';
+
+  if (!resolvedKind) {
+    return {
+      valid: false,
+      error: 'Unsupported format. Allowed: MP4, WebM, PDF, PPT/PPTX, DOC/DOCX, MP3/WAV/OGG/AAC, JPG/PNG/WebP, or WebVTT captions.',
+    };
+  }
+
+  const limitKey = preferredKind === 'low_bandwidth_video' && resolvedKind === 'video' ? 'low_bandwidth_video' : resolvedKind;
+  const maxBytes = LMS_MEDIA_LIMITS_BYTES[limitKey];
+  if (file.size <= 0 || file.size > maxBytes) {
+    return {
+      valid: false,
+      error: `File exceeds the ${Math.round(maxBytes / (1024 * 1024))} MB limit for ${limitKey.replace('_', ' ')} files.`,
+    };
+  }
+
+  return { valid: true, detectedKind: limitKey };
+}
+
+export const lmsCourseSchema = z.object({
+  title: freeTextMessageSchema(5, 140),
+  description: freeTextMessageSchema(20, 2500),
+  category: z.string().transform(sanitizeString).refine((v) => v.length >= 2 && v.length <= 60, {
+    message: 'Select a valid course category.',
+  }),
+  targetAudience: freeTextMessageSchema(5, 200),
+  ageEligibility: z.enum(['all_5_35', 'children_5_17', 'young_adults_18_35', 'adults_18_plus']),
+  level: z.enum(['beginner', 'intermediate', 'advanced']),
+  durationHours: z.number().min(0.5).max(500),
+  learningFormat: z.enum(['self_paced', 'instructor_led', 'blended']),
+  startDate: z.string().min(4),
+  endDate: z.string().min(4),
+  enrolmentCapacity: z.number().int().min(1).max(2000),
+  learningObjectives: z.array(z.string().min(3).max(200)).min(1, { message: 'Add at least one learning objective.' }),
+});
+
+export const lmsModuleSchema = z.object({
+  courseId: z.string().min(1),
+  title: freeTextMessageSchema(3, 120),
+  description: freeTextMessageSchema(5, 600),
+  orderIndex: z.number().int().min(1).max(200),
+});
+
+export const lmsLessonSchema = z.object({
+  courseId: z.string().min(1),
+  moduleId: z.string().min(1),
+  title: freeTextMessageSchema(3, 140),
+  lessonType: z.enum(['video', 'pdf', 'presentation', 'audio', 'text', 'practical_demo', 'external_resource', 'study_notes']),
+  durationMinutes: z.number().int().min(1).max(360),
+  isRequired: z.boolean(),
+  textContent: z.string().max(12000).optional(),
+  transcript: z.string().max(15000).optional(),
+});
+
+export const lmsZoomSessionSchema = z.object({
+  courseId: z.string().min(1, { message: 'Course selection is required.' }),
+  moduleId: z.string().optional(),
+  title: freeTextMessageSchema(4, 140),
+  description: freeTextMessageSchema(8, 800),
+  scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { message: 'Use YYYY-MM-DD date format.' }),
+  startTimeKampala: z.string().regex(/^\d{2}:\d{2}$/, { message: 'Use HH:mm time in Africa/Kampala.' }),
+  durationMinutes: z.number().int().min(15).max(300),
+  capacity: z.number().int().min(2).max(500).optional(),
+  isRecurring: z.boolean().default(false),
+});
+
+export const lmsAssessmentSchema = z.object({
+  courseId: z.string().min(1),
+  title: freeTextMessageSchema(4, 140),
+  assessmentType: z.enum(['pre_course', 'post_course', 'quiz', 'written_assignment', 'file_assignment']),
+  instructions: freeTextMessageSchema(8, 1200),
+  passMarkPercent: z.number().int().min(10).max(100),
+  maxAttempts: z.number().int().min(1).max(20),
+});
+
+export const lmsQuestionSchema = z.object({
+  assessmentId: z.string().min(1),
+  courseId: z.string().min(1),
+  questionType: z.enum(['mcq', 'true_false', 'short_answer', 'written']),
+  prompt: freeTextMessageSchema(5, 600),
+  points: z.number().int().min(1).max(100),
+});
+
+
 

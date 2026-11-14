@@ -38,6 +38,13 @@ const SafeguardingCommandPage = lazy(() => import('./features/safeguarding/Safeg
 const ResourcesPage = lazy(() => import('./features/public/PublicPages').then((m) => ({ default: m.ResourcesPage })));
 const ContactPage = lazy(() => import('./features/public/PublicPages').then((m) => ({ default: m.ContactPage })));
 
+// LMS & Online Skilling pages
+const LmsLearningDashboardPage = lazy(() => import('./features/lms/LmsLearningDashboardPage').then((m) => ({ default: m.LmsLearningDashboardPage })));
+const CoursePlayerPage = lazy(() => import('./features/lms/CoursePlayerPage').then((m) => ({ default: m.CoursePlayerPage })));
+const InstructorStudioPage = lazy(() => import('./features/lms/InstructorStudioPage').then((m) => ({ default: m.InstructorStudioPage })));
+const LearningManagerPage = lazy(() => import('./features/lms/LearningManagerPage').then((m) => ({ default: m.LearningManagerPage })));
+const VerifyCertificatePage = lazy(() => import('./features/lms/VerifyCertificatePage').then((m) => ({ default: m.VerifyCertificatePage })));
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -252,6 +259,35 @@ export default function App() {
                         </ProtectedRoute>
                       }
                     />
+
+                    {/* LMS & Online Skilling Routes */}
+                    <Route path="/learn" element={<LmsLearningDashboardPage />} />
+                    <Route
+                      path="/learn/course/:courseId"
+                      element={
+                        <ProtectedRoute>
+                          <CoursePlayerPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/instructor"
+                      element={
+                        <ProtectedRoute allowedRoles={['instructor', 'mentor', 'learning_manager', 'admin']}>
+                          <InstructorStudioPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/learning-manager"
+                      element={
+                        <ProtectedRoute allowedRoles={['learning_manager', 'admin']}>
+                          <LearningManagerPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route path="/verify-certificate" element={<VerifyCertificatePage />} />
+                    <Route path="/verify-certificate/:certificateNumber" element={<VerifyCertificatePage />} />
 
                     {/* 404 Catch-All */}
                     <Route path="*" element={<NotFoundPage />} />

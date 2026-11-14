@@ -1,7 +1,10 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { onCall, HttpsError, CallableRequest } from 'firebase-functions/v2/https';
+import { getStorage } from 'firebase-admin/storage';
+import { onCall, onRequest, HttpsError, CallableRequest } from 'firebase-functions/v2/https';
+import { defineSecret } from 'firebase-functions/params';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 
 initializeApp();
@@ -10,7 +13,20 @@ const DATABASE_ID = 'ai-studio-boychildassociat-e2cf5f8e-ec8b-4c04-89e0-7eec41b5
 const db = getFirestore(DATABASE_ID);
 const adminAuth = getAuth();
 
-type UserRole = 'boy' | 'guardian' | 'mentor' | 'partner' | 'coordinator' | 'admin';
+const ZOOM_ACCOUNT_ID = defineSecret('ZOOM_ACCOUNT_ID');
+const ZOOM_CLIENT_ID = defineSecret('ZOOM_CLIENT_ID');
+const ZOOM_CLIENT_SECRET = defineSecret('ZOOM_CLIENT_SECRET');
+const ZOOM_WEBHOOK_SECRET_TOKEN = defineSecret('ZOOM_WEBHOOK_SECRET_TOKEN');
+
+type UserRole =
+  | 'boy'
+  | 'guardian'
+  | 'mentor'
+  | 'partner'
+  | 'coordinator'
+  | 'instructor'
+  | 'learning_manager'
+  | 'admin';
 
 const sanitize = (val: string) => val.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
@@ -58,6 +74,11 @@ async function getCallerContext(request: CallableRequest) {
     fullName: (userData.fullName as string) || request.auth.token.name || 'BCA User',
     safeguardingCleared:
       tokenRole === 'admin' || Boolean(request.auth.token.safeguardingCleared || userData.safeguardingCleared),
+    instructorAuthorized:
+      tokenRole === 'instructor' ||
+      tokenRole === 'learning_manager' ||
+      tokenRole === 'admin' ||
+      Boolean(request.auth.token.instructorAuthorized || userData.instructorAuthorized),
     assignedCaseIds: Array.isArray(userData.assignedCaseIds) ? (userData.assignedCaseIds as string[]) : [],
   };
 }
@@ -920,20 +941,33 @@ export const assignUserRole = onCall(async (request) => {
   assertRole(caller.role, ['admin']);
   const schema = z.object({
     targetUid: z.string().min(1),
-    newRole: z.enum(['boy', 'guardian', 'mentor', 'partner', 'coordinator', 'admin']),
+    newRole: z.enum(['boy', 'guardian', 'mentor', 'partner', 'coordinator', 'instructor', 'learning_manager', 'admin']),
     safeguardingCleared: z.boolean().optional(),
+    instructorAuthorized: z.boolean().optional(),
   });
   const parsed = schema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', 'Invalid role assignment.');
 
-  const { targetUid, newRole, safeguardingCleared } = parsed.data;
+  const { targetUid, newRole, safeguardingCleared, instructorAuthorized } = parsed.data;
   const cleared = newRole === 'admin' ? true : Boolean(safeguardingCleared);
+  const canInstruct =
+    newRole === 'instructor' || newRole === 'learning_manager' || newRole === 'admin'
+      ? true
+      : Boolean(instructorAuthorized);
+
   await db.collection('users').doc(targetUid).update({
     role: newRole,
     safeguardingCleared: cleared,
+    instructorAuthorized: canInstruct,
     updatedAt: FieldValue.serverTimestamp(),
   });
-  await adminAuth.setCustomUserClaims(targetUid, { role: newRole, safeguardingCleared: cleared }).catch(() => undefined);
+  await adminAuth
+    .setCustomUserClaims(targetUid, {
+      role: newRole,
+      safeguardingCleared: cleared,
+      instructorAuthorized: canInstruct,
+    })
+    .catch(() => undefined);
 
   await writeAuditLog({
     action: 'USER_ROLE_ASSIGNED',
@@ -941,7 +975,7 @@ export const assignUserRole = onCall(async (request) => {
     performedByRole: caller.role,
     targetEntity: 'users',
     targetId: targetUid,
-    details: `Role assigned: ${newRole}, safeguardingCleared=${cleared}`,
+    details: `Role assigned: ${newRole}, safeguardingCleared=${cleared}, instructorAuthorized=${canInstruct}`,
   });
 
   return { ok: true };
@@ -1379,6 +1413,1393 @@ export const purgeExpiredRetentionRecords = onCall(async (request) => {
   });
 
   return { purgedMembershipApplications: expiredApps.size };
+});
+
+// =========================================================================
+// BCA ONLINE SKILLING LMS & ZOOM SERVER-TO-SERVER INTEGRATION
+// =========================================================================
+
+let cachedZoomToken: { token: string; expiresAtMs: number } | null = null;
+
+function areZoomSecretsConfigured(): boolean {
+  return Boolean(
+    process.env.ZOOM_ACCOUNT_ID?.trim() &&
+      process.env.ZOOM_CLIENT_ID?.trim() &&
+      process.env.ZOOM_CLIENT_SECRET?.trim()
+  );
+}
+
+async function getZoomAccessToken(): Promise<string> {
+  if (!areZoomSecretsConfigured()) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Zoom Server-to-Server OAuth credentials are not configured in Cloud Functions Secret Manager.'
+    );
+  }
+  if (cachedZoomToken && Date.now() < cachedZoomToken.expiresAtMs - 60_000) {
+    return cachedZoomToken.token;
+  }
+  const accountId = ZOOM_ACCOUNT_ID.value().trim();
+  const clientId = ZOOM_CLIENT_ID.value().trim();
+  const clientSecret = ZOOM_CLIENT_SECRET.value().trim();
+  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+  const response = await fetch(
+    `https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(accountId)}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    }
+  );
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new HttpsError('unavailable', `Zoom OAuth authentication failed (${response.status}): ${errText.slice(0, 180)}`);
+  }
+  const payload = (await response.json()) as { access_token: string; expires_in: number };
+  cachedZoomToken = {
+    token: payload.access_token,
+    expiresAtMs: Date.now() + (payload.expires_in || 3600) * 1000,
+  };
+  return payload.access_token;
+}
+
+function toUtcFromKampala(scheduledDate: string, startTimeKampala: string): string {
+  // Uganda observes East Africa Time (UTC+03:00 year-round, no DST)
+  const parsed = new Date(`${scheduledDate}T${startTimeKampala}:00+03:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new HttpsError('invalid-argument', 'Invalid Kampala date or time format.');
+  }
+  return parsed.toISOString();
+}
+
+function maskDisplayNameForMinorCertificate(fullName: string, isMinor: boolean): string {
+  const clean = sanitize(fullName);
+  if (!isMinor) return clean;
+  const parts = clean.split(' ').filter(Boolean);
+  if (parts.length <= 1) return `${parts[0]?.[0] || 'B'}.`;
+  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+}
+
+async function assertCourseInstructorOrManager(caller: Awaited<ReturnType<typeof getCallerContext>>, courseId: string) {
+  if (caller.role === 'admin' || caller.role === 'learning_manager') return;
+  if (!caller.instructorAuthorized) {
+    throw new HttpsError('permission-denied', 'Instructor authorization required.');
+  }
+  const [assignSnap, courseSnap] = await Promise.all([
+    db.collection('instructorAssignments').doc(`${courseId}_${caller.uid}`).get(),
+    db.collection('courses').doc(courseId).get(),
+  ]);
+  const isAssignedDoc = assignSnap.exists && assignSnap.data()?.status === 'active';
+  const courseData = courseSnap.data();
+  const isCourseOwner =
+    courseSnap.exists &&
+    (courseData?.createdBy === caller.uid ||
+      (Array.isArray(courseData?.instructorIds) && courseData.instructorIds.includes(caller.uid)));
+  if (!isAssignedDoc && !isCourseOwner) {
+    throw new HttpsError('permission-denied', 'You are not assigned as an instructor on this course.');
+  }
+}
+
+async function recalculateCourseProgressAndIssue(courseId: string, userId: string) {
+  const [lessonsSnap, progressSnap, enrollSnap, courseSnap, userSnap] = await Promise.all([
+    db.collection('courseLessons').where('courseId', '==', courseId).where('status', '==', 'published').get(),
+    db.collection('lessonProgress').where('courseId', '==', courseId).where('userId', '==', userId).get(),
+    db.collection('courseEnrollments').doc(`${courseId}_${userId}`).get(),
+    db.collection('courses').doc(courseId).get(),
+    db.collection('users').doc(userId).get(),
+  ]);
+  if (!enrollSnap.exists) return { progressPercent: 0 };
+
+  const requiredLessons = lessonsSnap.docs.filter((d) => d.data().isRequired !== false);
+  const targetLessons = requiredLessons.length > 0 ? requiredLessons : lessonsSnap.docs;
+  const totalCount = targetLessons.length;
+  const completedLessonIds = new Set(progressSnap.docs.filter((d) => d.data().completed === true).map((d) => d.data().lessonId));
+  const completedCount = targetLessons.filter((d) => completedLessonIds.has(d.id)).length;
+  const totalMinutes = Math.round(
+    progressSnap.docs.reduce((sum, d) => sum + Number(d.data().watchedSeconds || 0), 0) / 60
+  );
+  const progressPercent = totalCount === 0 ? 0 : Math.min(100, Math.round((completedCount / totalCount) * 100));
+
+  const updatePayload: Record<string, unknown> = {
+    progressPercent,
+    completedLessonsCount: completedCount,
+    totalLessonsCount: totalCount,
+    learningMinutes: totalMinutes,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  if (progressPercent === 100 && enrollSnap.data()?.status !== 'completed') {
+    updatePayload.status = 'completed';
+    updatePayload.completedAt = new Date().toISOString();
+  }
+  await enrollSnap.ref.update(updatePayload);
+
+  if (progressPercent === 100) {
+    const existingCert = await db.collection('certificates').doc(`${courseId}_${userId}`).get();
+    if (!existingCert.exists && courseSnap.exists && userSnap.exists) {
+      const courseData = courseSnap.data()!;
+      const userData = userSnap.data()!;
+      const isMinor = userData.ageCategory === 'child_5_17' || Number(userData.calculatedAge || 18) < 18;
+      const year = new Date().getFullYear();
+      const rand = Math.floor(1000 + Math.random() * 9000);
+      const certificateNumber = `BCA-CERT-${year}-${rand}`;
+      const qrToken = `CERTQR-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      const completionDate = new Date().toISOString().slice(0, 10);
+      const learnerDisplayName = maskDisplayNameForMinorCertificate(userData.fullName || 'BCA Learner', isMinor);
+      const instructorSignatory = Array.isArray(courseData.instructorNames) && courseData.instructorNames[0]
+        ? String(courseData.instructorNames[0])
+        : 'BCA Lead Instructor';
+
+      await db.runTransaction(async (tx) => {
+        tx.set(db.collection('certificates').doc(`${courseId}_${userId}`), {
+          id: `${courseId}_${userId}`,
+          certificateNumber,
+          courseId,
+          courseTitle: courseData.title,
+          userId,
+          learnerDisplayName,
+          completionDate,
+          instructorSignatory,
+          learningManagerSignatory: 'BCA Uganda Learning Department',
+          qrToken,
+          status: 'issued',
+          issuedAt: new Date().toISOString(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        tx.set(db.collection('certificateVerifications').doc(certificateNumber), {
+          certificateNumber,
+          courseTitle: courseData.title,
+          learnerDisplayName,
+          completionDate,
+          instructorSignatory,
+          status: 'issued',
+          qrToken,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
+
+      await db.collection('learningNotifications').add({
+        userId,
+        courseId,
+        title: 'Digital Certificate Issued',
+        message: `Congratulations! Your certificate ${certificateNumber} for ${courseData.title} is ready to download.`,
+        category: 'certificate',
+        read: false,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  return { progressPercent, completedCount, totalCount };
+}
+
+// 31. connectZoomConfiguration
+export const connectZoomConfiguration = onCall(
+  { secrets: [ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET] },
+  async (request) => {
+    const caller = await getCallerContext(request);
+    assertRole(caller.role, ['learning_manager', 'admin']);
+    const schema = z.object({
+      hostUserIdOrEmail: z.string().min(2).max(160).transform(sanitize),
+      defaultTimezone: z.literal('Africa/Kampala').default('Africa/Kampala'),
+      minorSafeguardingLock: z.boolean().default(true),
+    });
+    const parsed = schema.safeParse(request.data);
+    if (!parsed.success) throw new HttpsError('invalid-argument', 'Valid Zoom host user ID or email is required.');
+
+    const secretsConfigured = areZoomSecretsConfigured();
+    const payload = {
+      connected: secretsConfigured,
+      secretsConfigured,
+      hostUserIdOrEmail: parsed.data.hostUserIdOrEmail,
+      defaultTimezone: 'Africa/Kampala',
+      minorSafeguardingLock: parsed.data.minorSafeguardingLock,
+      statusMessage: secretsConfigured
+        ? 'Zoom Server-to-Server OAuth secrets detected. Run Test Connection to verify the host account.'
+        : 'Zoom Server-to-Server OAuth secrets (ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET) are not configured in Cloud Functions Secret Manager yet.',
+      updatedBy: caller.fullName,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await db.collection('systemSettings').doc('zoomIntegration').set(
+      {
+        key: 'zoomIntegration',
+        status: 'published',
+        payload,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: caller.uid,
+      },
+      { merge: true }
+    );
+
+    await writeAuditLog({
+      action: 'ZOOM_CONFIG_UPDATED',
+      performedBy: caller.fullName,
+      performedByRole: caller.role,
+      targetEntity: 'systemSettings',
+      targetId: 'zoomIntegration',
+      details: `Zoom host set to ${parsed.data.hostUserIdOrEmail}. Secrets configured: ${secretsConfigured}`,
+    });
+
+    return payload;
+  }
+);
+
+// 32. testZoomConnection
+export const testZoomConnection = onCall(
+  { secrets: [ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET] },
+  async (request) => {
+    const caller = await getCallerContext(request);
+    assertRole(caller.role, ['learning_manager', 'admin']);
+
+    const secretsConfigured = areZoomSecretsConfigured();
+    const settingSnap = await db.collection('systemSettings').doc('zoomIntegration').get();
+    const existingPayload = (settingSnap.data()?.payload as Record<string, unknown>) || {};
+    const hostUser = String(existingPayload.hostUserIdOrEmail || 'me');
+
+    if (!secretsConfigured) {
+      const payload = {
+        ...existingPayload,
+        connected: false,
+        secretsConfigured: false,
+        hostUserIdOrEmail: hostUser,
+        defaultTimezone: 'Africa/Kampala',
+        minorSafeguardingLock: true,
+        lastTestedAt: new Date().toISOString(),
+        statusMessage: 'Zoom API integration is not configured. Missing Cloud Functions Secret Manager keys (ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET).',
+        updatedAt: new Date().toISOString(),
+      };
+      await db.collection('systemSettings').doc('zoomIntegration').set(
+        { key: 'zoomIntegration', status: 'published', payload, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller.uid },
+        { merge: true }
+      );
+      return payload;
+    }
+
+    const token = await getZoomAccessToken();
+    const res = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(hostUser)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new HttpsError('failed-precondition', `Zoom host verification failed (${res.status}): ${body.slice(0, 160)}`);
+    }
+    const zoomUser = (await res.json()) as { first_name?: string; last_name?: string; email?: string };
+    const displayName = [zoomUser.first_name, zoomUser.last_name].filter(Boolean).join(' ') || zoomUser.email || hostUser;
+
+    const payload = {
+      ...existingPayload,
+      connected: true,
+      secretsConfigured: true,
+      hostUserIdOrEmail: hostUser,
+      verifiedHostDisplayName: displayName,
+      defaultTimezone: 'Africa/Kampala',
+      minorSafeguardingLock: true,
+      lastTestedAt: new Date().toISOString(),
+      statusMessage: `Connected to Zoom host ${displayName} (${zoomUser.email || hostUser}).`,
+      updatedBy: caller.fullName,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.collection('systemSettings').doc('zoomIntegration').set(
+      { key: 'zoomIntegration', status: 'published', payload, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller.uid },
+      { merge: true }
+    );
+    return payload;
+  }
+);
+
+// 33. createZoomMeeting
+export const createZoomMeeting = onCall(
+  { secrets: [ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET] },
+  async (request) => {
+    const caller = await getCallerContext(request);
+    assertRole(caller.role, ['instructor', 'mentor', 'learning_manager', 'admin']);
+    const schema = z.object({
+      courseId: z.string().min(1),
+      moduleId: z.string().optional(),
+      title: z.string().min(3).max(160).transform(sanitize),
+      description: z.string().max(800).transform(sanitize).default('Live interactive class session'),
+      scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      startTimeKampala: z.string().regex(/^\d{2}:\d{2}$/),
+      durationMinutes: z.number().int().min(15).max(240),
+      isRecurring: z.boolean().default(false),
+      recurrenceRule: z.string().max(120).optional(),
+      manualJoinUrl: z.string().url().optional(),
+      manualPasscode: z.string().max(24).optional(),
+    });
+    const parsed = schema.safeParse(request.data);
+    if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message || 'Invalid session payload.');
+
+    const d = parsed.data;
+    await assertCourseInstructorOrManager(caller, d.courseId);
+
+    const courseSnap = await db.collection('courses').doc(d.courseId).get();
+    if (!courseSnap.exists) throw new HttpsError('not-found', 'Course not found.');
+    const courseData = courseSnap.data()!;
+    const startsAtIso = toUtcFromKampala(d.scheduledDate, d.startTimeKampala);
+
+    const sessionRef = db.collection('courseSessions').doc();
+    const meetingRef = db.collection('zoomMeetings').doc();
+    const secretRef = db.collection('zoomMeetingSecrets').doc(meetingRef.id);
+
+    let zoomMeetingId = '';
+    let joinUrl = '';
+    let startUrl = '';
+    let passcode = '';
+    let mode: 'zoom_api' | 'manual_fallback' = 'zoom_api';
+
+    if (areZoomSecretsConfigured()) {
+      const token = await getZoomAccessToken();
+      const settingSnap = await db.collection('systemSettings').doc('zoomIntegration').get();
+      const hostUser = String((settingSnap.data()?.payload as Record<string, unknown> | undefined)?.hostUserIdOrEmail || 'me');
+
+      const zoomRes = await fetch(`https://api.zoom.us/v2/users/${encodeURIComponent(hostUser)}/meetings`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          topic: `${courseData.title}: ${d.title}`,
+          type: d.isRecurring ? 8 : 2,
+          start_time: startsAtIso,
+          duration: d.durationMinutes,
+          timezone: 'Africa/Kampala',
+          agenda: d.description,
+          settings: {
+            waiting_room: true,
+            join_before_host: false,
+            mute_upon_entry: true,
+            auto_recording: 'none',
+            meeting_authentication: false,
+          },
+        }),
+      });
+      if (!zoomRes.ok) {
+        const errBody = await zoomRes.text().catch(() => '');
+        throw new HttpsError('unavailable', `Zoom API failed to create meeting (${zoomRes.status}): ${errBody.slice(0, 180)}`);
+      }
+      const created = (await zoomRes.json()) as {
+        id: number | string;
+        join_url: string;
+        start_url: string;
+        password?: string;
+      };
+      zoomMeetingId = String(created.id);
+      joinUrl = created.join_url;
+      startUrl = created.start_url;
+      passcode = created.password || '';
+      mode = 'zoom_api';
+    } else if (d.manualJoinUrl) {
+      mode = 'manual_fallback';
+      zoomMeetingId = `MANUAL-${Date.now()}`;
+      joinUrl = d.manualJoinUrl;
+      startUrl = d.manualJoinUrl;
+      passcode = d.manualPasscode || '';
+    } else {
+      throw new HttpsError(
+        'failed-precondition',
+        'Zoom Server-to-Server OAuth credentials are not configured. Configure Zoom secrets in Learning Manager settings or supply a manual Zoom meeting link fallback.'
+      );
+    }
+
+    await db.runTransaction(async (tx) => {
+      tx.set(sessionRef, {
+        id: sessionRef.id,
+        courseId: d.courseId,
+        courseTitle: courseData.title,
+        moduleId: d.moduleId || null,
+        title: d.title,
+        description: d.description,
+        instructorUid: caller.uid,
+        instructorName: caller.fullName,
+        scheduledDate: d.scheduledDate,
+        startTimeKampala: d.startTimeKampala,
+        startsAtIso,
+        durationMinutes: d.durationMinutes,
+        timezone: 'Africa/Kampala',
+        zoomMeetingDocId: meetingRef.id,
+        isRecurring: d.isRecurring,
+        recurrenceRule: d.recurrenceRule || null,
+        status: 'scheduled',
+        createdBy: caller.uid,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      tx.set(meetingRef, {
+        id: meetingRef.id,
+        courseId: d.courseId,
+        sessionId: sessionRef.id,
+        zoomMeetingId,
+        topic: d.title,
+        startTimeUtc: startsAtIso,
+        durationMinutes: d.durationMinutes,
+        timezone: 'Africa/Kampala',
+        hostIdentity: caller.fullName,
+        status: 'scheduled',
+        waitingRoom: true,
+        joinBeforeHost: false,
+        recordingEnabled: false,
+        participantRestrictionsApplied: true,
+        passcodeProtected: Boolean(passcode),
+        mode,
+        createdBy: caller.uid,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      tx.set(secretRef, {
+        meetingDocId: meetingRef.id,
+        joinUrl,
+        startUrl,
+        passcode,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    await writeAuditLog({
+      action: 'ZOOM_MEETING_SCHEDULED',
+      performedBy: caller.fullName,
+      performedByRole: caller.role,
+      targetEntity: 'courseSessions',
+      targetId: sessionRef.id,
+      details: `Scheduled ${mode} live class (${zoomMeetingId}) for ${d.scheduledDate} ${d.startTimeKampala} EAT.`,
+    });
+
+    return { sessionId: sessionRef.id, meetingDocId: meetingRef.id, zoomMeetingId, startsAtIso, mode };
+  }
+);
+
+// 34. updateZoomMeeting
+export const updateZoomMeeting = onCall(
+  { secrets: [ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET] },
+  async (request) => {
+    const caller = await getCallerContext(request);
+    assertRole(caller.role, ['instructor', 'mentor', 'learning_manager', 'admin']);
+    const schema = z.object({
+      sessionId: z.string().min(1),
+      title: z.string().min(3).max(160).transform(sanitize).optional(),
+      scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      startTimeKampala: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+      durationMinutes: z.number().int().min(15).max(240).optional(),
+    });
+    const parsed = schema.safeParse(request.data);
+    if (!parsed.success) throw new HttpsError('invalid-argument', 'Invalid update parameters.');
+
+    const sessionRef = db.collection('courseSessions').doc(parsed.data.sessionId);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists) throw new HttpsError('not-found', 'Live session not found.');
+    const sessionData = sessionSnap.data()!;
+    await assertCourseInstructorOrManager(caller, sessionData.courseId);
+
+    const nextDate = parsed.data.scheduledDate || sessionData.scheduledDate;
+    const nextTime = parsed.data.startTimeKampala || sessionData.startTimeKampala;
+    const nextIso = toUtcFromKampala(nextDate, nextTime);
+    const nextDuration = parsed.data.durationMinutes || sessionData.durationMinutes;
+    const nextTitle = parsed.data.title || sessionData.title;
+
+    if (sessionData.zoomMeetingDocId) {
+      const mRef = db.collection('zoomMeetings').doc(sessionData.zoomMeetingDocId);
+      const mSnap = await mRef.get();
+      if (mSnap.exists && mSnap.data()?.mode === 'zoom_api' && areZoomSecretsConfigured()) {
+        const token = await getZoomAccessToken();
+        await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(mSnap.data()!.zoomMeetingId)}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: nextTitle,
+            start_time: nextIso,
+            duration: nextDuration,
+            timezone: 'Africa/Kampala',
+          }),
+        });
+      }
+      await mRef.update({
+        topic: nextTitle,
+        startTimeUtc: nextIso,
+        durationMinutes: nextDuration,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    await sessionRef.update({
+      title: nextTitle,
+      scheduledDate: nextDate,
+      startTimeKampala: nextTime,
+      startsAtIso: nextIso,
+      durationMinutes: nextDuration,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true, startsAtIso: nextIso };
+  }
+);
+
+// 35. cancelZoomMeeting
+export const cancelZoomMeeting = onCall(
+  { secrets: [ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET] },
+  async (request) => {
+    const caller = await getCallerContext(request);
+    assertRole(caller.role, ['instructor', 'mentor', 'learning_manager', 'admin']);
+    const schema = z.object({ sessionId: z.string().min(1), reason: z.string().max(300).optional() });
+    const parsed = schema.safeParse(request.data);
+    if (!parsed.success) throw new HttpsError('invalid-argument', 'sessionId is required.');
+
+    const sessionRef = db.collection('courseSessions').doc(parsed.data.sessionId);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists) throw new HttpsError('not-found', 'Live session not found.');
+    const sessionData = sessionSnap.data()!;
+    await assertCourseInstructorOrManager(caller, sessionData.courseId);
+
+    if (sessionData.zoomMeetingDocId) {
+      const mRef = db.collection('zoomMeetings').doc(sessionData.zoomMeetingDocId);
+      const mSnap = await mRef.get();
+      if (mSnap.exists && mSnap.data()?.mode === 'zoom_api' && areZoomSecretsConfigured()) {
+        const token = await getZoomAccessToken();
+        await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(mSnap.data()!.zoomMeetingId)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
+      }
+      await mRef.update({ status: 'cancelled', updatedAt: FieldValue.serverTimestamp() });
+    }
+
+    await sessionRef.update({ status: 'cancelled', updatedAt: FieldValue.serverTimestamp() });
+    await writeAuditLog({
+      action: 'ZOOM_MEETING_CANCELLED',
+      performedBy: caller.fullName,
+      performedByRole: caller.role,
+      targetEntity: 'courseSessions',
+      targetId: parsed.data.sessionId,
+      details: parsed.data.reason ? sanitize(parsed.data.reason) : 'Live session cancelled.',
+    });
+
+    return { ok: true };
+  }
+);
+
+// 36. getAuthorizedMeetingDetails
+export const getAuthorizedMeetingDetails = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  const schema = z.object({ sessionId: z.string().min(1) });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'sessionId is required.');
+
+  const sessionSnap = await db.collection('courseSessions').doc(parsed.data.sessionId).get();
+  if (!sessionSnap.exists) throw new HttpsError('not-found', 'Live class session not found.');
+  const session = sessionSnap.data()!;
+  if (session.status === 'cancelled') {
+    throw new HttpsError('failed-precondition', 'This live class session has been cancelled.');
+  }
+
+  let isHostOrManager = caller.role === 'admin' || caller.role === 'learning_manager';
+  if (!isHostOrManager && caller.instructorAuthorized) {
+    const assignSnap = await db.collection('instructorAssignments').doc(`${session.courseId}_${caller.uid}`).get();
+    isHostOrManager = (assignSnap.exists && assignSnap.data()?.status === 'active') || session.instructorUid === caller.uid;
+  }
+
+  if (!isHostOrManager) {
+    const enrollSnap = await db.collection('courseEnrollments').doc(`${session.courseId}_${caller.uid}`).get();
+    if (!enrollSnap.exists || !['approved', 'enrolled', 'completed'].includes(enrollSnap.data()?.status)) {
+      throw new HttpsError('permission-denied', 'Active enrolment in this course is required to join the live class.');
+    }
+  }
+
+  if (!session.zoomMeetingDocId) {
+    throw new HttpsError('failed-precondition', 'Meeting link has not been generated for this session.');
+  }
+  const [meetingSnap, secretSnap] = await Promise.all([
+    db.collection('zoomMeetings').doc(session.zoomMeetingDocId).get(),
+    db.collection('zoomMeetingSecrets').doc(session.zoomMeetingDocId).get(),
+  ]);
+  if (!meetingSnap.exists || !secretSnap.exists) {
+    throw new HttpsError('not-found', 'Meeting credentials unavailable.');
+  }
+  const meeting = meetingSnap.data()!;
+  const secret = secretSnap.data()!;
+
+  return {
+    sessionId: session.id,
+    zoomMeetingId: meeting.zoomMeetingId,
+    topic: session.title,
+    startsAtIso: session.startsAtIso,
+    durationMinutes: session.durationMinutes,
+    timezone: 'Africa/Kampala',
+    joinUrl: secret.joinUrl,
+    passcode: secret.passcode || '',
+    ...(isHostOrManager && secret.startUrl ? { startUrl: secret.startUrl } : {}),
+    safeguardingNotice: 'Waiting Room is enabled and recording is disabled by default for minor safeguarding.',
+  };
+});
+
+// 37. listCourseMeetings
+export const listCourseMeetings = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  const schema = z.object({ courseId: z.string().min(1) });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'courseId is required.');
+
+  const isManager = caller.role === 'admin' || caller.role === 'learning_manager';
+  if (!isManager) {
+    const enrollSnap = await db.collection('courseEnrollments').doc(`${parsed.data.courseId}_${caller.uid}`).get();
+    const isEnrolled = enrollSnap.exists && ['approved', 'enrolled', 'completed'].includes(enrollSnap.data()?.status);
+    if (!isEnrolled) {
+      await assertCourseInstructorOrManager(caller, parsed.data.courseId);
+    }
+  }
+
+  const sessionsSnap = await db.collection('courseSessions').where('courseId', '==', parsed.data.courseId).get();
+  return { sessions: sessionsSnap.docs.map((d) => ({ id: d.id, ...d.data() })) };
+});
+
+// 38. syncMeetingStatus
+export const syncMeetingStatus = onCall(
+  { secrets: [ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET] },
+  async (request) => {
+    const caller = await getCallerContext(request);
+    assertRole(caller.role, ['instructor', 'mentor', 'learning_manager', 'admin']);
+    const schema = z.object({ sessionId: z.string().min(1) });
+    const parsed = schema.safeParse(request.data);
+    if (!parsed.success) throw new HttpsError('invalid-argument', 'sessionId is required.');
+
+    const sessionSnap = await db.collection('courseSessions').doc(parsed.data.sessionId).get();
+    if (!sessionSnap.exists) throw new HttpsError('not-found', 'Session not found.');
+    const session = sessionSnap.data()!;
+    await assertCourseInstructorOrManager(caller, session.courseId);
+
+    const meetingSnap = session.zoomMeetingDocId
+      ? await db.collection('zoomMeetings').doc(session.zoomMeetingDocId).get()
+      : null;
+    if (!meetingSnap?.exists || meetingSnap.data()?.mode !== 'zoom_api' || !areZoomSecretsConfigured()) {
+      return { ok: true, status: session.status, mode: meetingSnap?.data()?.mode || 'manual_fallback' };
+    }
+
+    const token = await getZoomAccessToken();
+    const res = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingSnap.data()!.zoomMeetingId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new HttpsError('unavailable', 'Unable to sync meeting status from Zoom.');
+    const zm = (await res.json()) as { status?: string };
+    const nextStatus = zm.status === 'started' ? 'live' : zm.status === 'finished' ? 'completed' : 'scheduled';
+    await sessionSnap.ref.update({ status: nextStatus, updatedAt: FieldValue.serverTimestamp() });
+    await meetingSnap.ref.update({
+      status: zm.status === 'started' ? 'started' : zm.status === 'finished' ? 'ended' : 'scheduled',
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { ok: true, status: nextStatus };
+  }
+);
+
+// 39. processZoomWebhook
+export const processZoomWebhook = onRequest(
+  { secrets: [ZOOM_WEBHOOK_SECRET_TOKEN] },
+  async (req, res) => {
+    const secretToken = ZOOM_WEBHOOK_SECRET_TOKEN.value().trim();
+    if (!secretToken) {
+      res.status(503).json({ error: 'Zoom webhook secret not configured.' });
+      return;
+    }
+
+    const body = req.body as {
+      event?: string;
+      payload?: {
+        plainToken?: string;
+        object?: { id?: string | number; participant?: { email?: string; user_name?: string } };
+      };
+    };
+
+    // Endpoint validation handshake required by Zoom
+    if (body?.event === 'endpoint.url_validation' && body.payload?.plainToken) {
+      const encryptedToken = createHmac('sha256', secretToken).update(body.payload.plainToken).digest('hex');
+      res.status(200).json({ plainToken: body.payload.plainToken, encryptedToken });
+      return;
+    }
+
+    const signature = String(req.headers['x-zm-signature'] || '');
+    const timestamp = String(req.headers['x-zm-request-timestamp'] || '');
+    const rawBody = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(body);
+    const expectedSig = `v0=${createHmac('sha256', secretToken).update(`v0:${timestamp}:${rawBody}`).digest('hex')}`;
+
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+      res.status(401).json({ error: 'Invalid Zoom webhook signature.' });
+      return;
+    }
+
+    const zoomId = body.payload?.object?.id ? String(body.payload.object.id) : '';
+    if (zoomId) {
+      const mQuery = await db.collection('zoomMeetings').where('zoomMeetingId', '==', zoomId).limit(1).get();
+      if (!mQuery.empty) {
+        const mDoc = mQuery.docs[0];
+        const sessionId = mDoc.data().sessionId as string;
+        if (body.event === 'meeting.started') {
+          await mDoc.ref.update({ status: 'started', updatedAt: FieldValue.serverTimestamp() });
+          await db.collection('courseSessions').doc(sessionId).update({ status: 'live', updatedAt: FieldValue.serverTimestamp() });
+        } else if (body.event === 'meeting.ended') {
+          await mDoc.ref.update({ status: 'ended', updatedAt: FieldValue.serverTimestamp() });
+          await db.collection('courseSessions').doc(sessionId).update({ status: 'completed', updatedAt: FieldValue.serverTimestamp() });
+        } else if (body.event === 'meeting.deleted') {
+          await mDoc.ref.update({ status: 'cancelled', updatedAt: FieldValue.serverTimestamp() });
+          await db.collection('courseSessions').doc(sessionId).update({ status: 'cancelled', updatedAt: FieldValue.serverTimestamp() });
+        }
+      }
+    }
+
+    res.status(200).json({ received: true });
+  }
+);
+
+// 40. submitCourseForApproval & 41. reviewCoursePublication
+export const submitCourseForApproval = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['instructor', 'mentor', 'learning_manager', 'admin']);
+  const schema = z.object({ courseId: z.string().min(1) });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'courseId is required.');
+
+  await assertCourseInstructorOrManager(caller, parsed.data.courseId);
+  await db.collection('courses').doc(parsed.data.courseId).update({
+    status: 'pending_approval',
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  await writeAuditLog({
+    action: 'COURSE_SUBMITTED_FOR_APPROVAL',
+    performedBy: caller.fullName,
+    performedByRole: caller.role,
+    targetEntity: 'courses',
+    targetId: parsed.data.courseId,
+    details: 'Course submitted for Learning Manager review.',
+  });
+  return { ok: true, status: 'pending_approval' };
+});
+
+export const reviewCoursePublication = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['learning_manager', 'admin']);
+  const schema = z.object({
+    courseId: z.string().min(1),
+    status: z.enum(['published', 'unpublished', 'archived', 'draft']),
+    approvalNotes: z.string().max(400).transform(sanitize).optional(),
+  });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Invalid publication decision.');
+
+  const courseRef = db.collection('courses').doc(parsed.data.courseId);
+  const courseSnap = await courseRef.get();
+  if (!courseSnap.exists) throw new HttpsError('not-found', 'Course not found.');
+  const courseData = courseSnap.data()!;
+
+  await courseRef.update({
+    status: parsed.data.status,
+    approvedBy: caller.fullName,
+    ...(parsed.data.approvalNotes ? { approvalNotes: parsed.data.approvalNotes } : {}),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  if (courseData.createdBy) {
+    await db.collection('learningNotifications').add({
+      userId: courseData.createdBy,
+      courseId: parsed.data.courseId,
+      title: `Course ${parsed.data.status.replace('_', ' ')}`,
+      message: `Course "${courseData.title}" status updated to ${parsed.data.status}.${parsed.data.approvalNotes ? ` Notes: ${parsed.data.approvalNotes}` : ''}`,
+      category: 'announcement',
+      read: false,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  }
+
+  await writeAuditLog({
+    action: `COURSE_STATUS_${parsed.data.status.toUpperCase()}`,
+    performedBy: caller.fullName,
+    performedByRole: caller.role,
+    targetEntity: 'courses',
+    targetId: parsed.data.courseId,
+    details: `Course set to ${parsed.data.status}.`,
+  });
+  return { ok: true, status: parsed.data.status };
+});
+
+// 42. assignCourseInstructor (Explicit Mentor -> Instructor authorization supported)
+export const assignCourseInstructor = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['learning_manager', 'admin']);
+  const schema = z.object({
+    courseId: z.string().min(1),
+    instructorUid: z.string().min(1),
+    roleType: z.enum(['lead_instructor', 'co_instructor']).default('lead_instructor'),
+    authorizeMentorForInstruction: z.boolean().default(true),
+  });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'courseId and instructorUid are required.');
+
+  const { courseId, instructorUid, roleType, authorizeMentorForInstruction } = parsed.data;
+  const [courseSnap, targetUserSnap] = await Promise.all([
+    db.collection('courses').doc(courseId).get(),
+    db.collection('users').doc(instructorUid).get(),
+  ]);
+  if (!courseSnap.exists || !targetUserSnap.exists) {
+    throw new HttpsError('not-found', 'Course or target instructor account not found.');
+  }
+  const targetUser = targetUserSnap.data()!;
+  if (targetUser.role === 'mentor' && !authorizeMentorForInstruction && !targetUser.instructorAuthorized) {
+    throw new HttpsError('failed-precondition', 'Mentors require explicit instructor authorization before assignment.');
+  }
+
+  if (targetUser.role === 'mentor' && authorizeMentorForInstruction) {
+    await targetUserSnap.ref.update({ instructorAuthorized: true, updatedAt: FieldValue.serverTimestamp() });
+    await adminAuth
+      .setCustomUserClaims(instructorUid, {
+        role: targetUser.role,
+        safeguardingCleared: Boolean(targetUser.safeguardingCleared),
+        instructorAuthorized: true,
+      })
+      .catch(() => undefined);
+  }
+
+  const courseData = courseSnap.data()!;
+  const existingIds = Array.isArray(courseData.instructorIds) ? (courseData.instructorIds as string[]) : [];
+  const existingNames = Array.isArray(courseData.instructorNames) ? (courseData.instructorNames as string[]) : [];
+  const nextIds = existingIds.includes(instructorUid) ? existingIds : [...existingIds, instructorUid];
+  const nextNames = existingNames.includes(targetUser.fullName) ? existingNames : [...existingNames, targetUser.fullName];
+
+  await db.runTransaction(async (tx) => {
+    tx.set(db.collection('instructorAssignments').doc(`${courseId}_${instructorUid}`), {
+      id: `${courseId}_${instructorUid}`,
+      courseId,
+      courseTitle: courseData.title,
+      instructorUid,
+      instructorName: targetUser.fullName,
+      roleType,
+      assignedBy: caller.uid,
+      assignedByName: caller.fullName,
+      status: 'active',
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.update(courseSnap.ref, {
+      instructorIds: nextIds,
+      instructorNames: nextNames,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  await writeAuditLog({
+    action: 'INSTRUCTOR_ASSIGNED_TO_COURSE',
+    performedBy: caller.fullName,
+    performedByRole: caller.role,
+    targetEntity: 'courses',
+    targetId: courseId,
+    details: `Assigned ${targetUser.fullName} (${roleType}) to ${courseData.title}`,
+  });
+
+  return { ok: true };
+});
+
+// 43. applyOrEnrollCourse (Age Eligibility + Minor Guardian Consent + Capacity Enforcement)
+export const applyOrEnrollCourse = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  const schema = z.object({ courseId: z.string().min(1) });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'courseId is required.');
+
+  const { courseId } = parsed.data;
+  const userSnap = await db.collection('users').doc(caller.uid).get();
+  if (!userSnap.exists) throw new HttpsError('not-found', 'User account not found.');
+  const userData = userSnap.data()!;
+
+  const isMinor = userData.ageCategory === 'child_5_17' || Number(userData.calculatedAge || 18) < 18;
+  if (isMinor && userData.status !== 'active') {
+    throw new HttpsError('failed-precondition', 'Verified guardian consent is required before a minor can enrol in courses.');
+  }
+
+  let resultStatus: 'enrolled' | 'pending' = 'enrolled';
+  await db.runTransaction(async (tx) => {
+    const courseRef = db.collection('courses').doc(courseId);
+    const courseSnap = await tx.get(courseRef);
+    if (!courseSnap.exists) throw new HttpsError('not-found', 'Course not found.');
+    const course = courseSnap.data()!;
+    if (course.status !== 'published') {
+      throw new HttpsError('failed-precondition', 'This course is not open for enrolment.');
+    }
+
+    if (course.ageEligibility === 'children_5_17' && !isMinor) {
+      throw new HttpsError('failed-precondition', 'This course is tailored exclusively for boys aged 5–17.');
+    }
+    if ((course.ageEligibility === 'young_adults_18_35' || course.ageEligibility === 'adults_18_plus') && isMinor) {
+      throw new HttpsError('failed-precondition', 'Age eligibility requires participants to be 18 or older.');
+    }
+
+    const capacity = Number(course.enrolmentCapacity || 100);
+    const enrolled = Number(course.enrolledCount || 0);
+    if (enrolled >= capacity) {
+      throw new HttpsError('failed-precondition', 'Course enrolment capacity has been reached.');
+    }
+
+    const enrollRef = db.collection('courseEnrollments').doc(`${courseId}_${caller.uid}`);
+    const existingEnroll = await tx.get(enrollRef);
+    if (existingEnroll.exists && ['enrolled', 'approved', 'completed', 'pending'].includes(existingEnroll.data()?.status)) {
+      resultStatus = existingEnroll.data()!.status;
+      return;
+    }
+
+    resultStatus = course.learningFormat === 'self_paced' ? 'enrolled' : 'pending';
+    tx.set(enrollRef, {
+      id: `${courseId}_${caller.uid}`,
+      courseId,
+      courseTitle: course.title,
+      userId: caller.uid,
+      learnerName: userData.fullName || caller.fullName,
+      learnerDistrict: userData.district || 'Kampala',
+      ageCategory: userData.ageCategory || 'young_adult_18_35',
+      isMinor,
+      guardianConsentVerified: isMinor ? userData.status === 'active' : true,
+      status: resultStatus,
+      progressPercent: 0,
+      completedLessonsCount: 0,
+      totalLessonsCount: 0,
+      learningMinutes: 0,
+      enrolledAt: new Date().toISOString(),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    if (resultStatus === 'enrolled') {
+      tx.update(courseRef, { enrolledCount: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp() });
+    }
+  });
+
+  await db.collection('learningNotifications').add({
+    userId: caller.uid,
+    courseId,
+    title: resultStatus === 'enrolled' ? 'Course Enrolment Confirmed' : 'Enrolment Request Received',
+    message:
+      resultStatus === 'enrolled'
+        ? 'You are enrolled and can start your lessons immediately.'
+        : 'Your enrolment request is awaiting Learning Manager approval.',
+    category: 'enrolment',
+    read: false,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return { status: resultStatus };
+});
+
+// 44. reviewCourseEnrollment
+export const reviewCourseEnrollment = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['learning_manager', 'admin']);
+  const schema = z.object({
+    enrollmentId: z.string().min(1),
+    decision: z.enum(['approved', 'rejected']),
+    reason: z.string().max(300).transform(sanitize).optional(),
+  });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Invalid enrolment review payload.');
+
+  let courseTitle = '';
+  let userId = '';
+  let courseId = '';
+  await db.runTransaction(async (tx) => {
+    const ref = db.collection('courseEnrollments').doc(parsed.data.enrollmentId);
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', 'Enrolment not found.');
+    const data = snap.data()!;
+    courseTitle = data.courseTitle;
+    userId = data.userId;
+    courseId = data.courseId;
+    const nextStatus = parsed.data.decision === 'approved' ? 'enrolled' : 'rejected';
+    tx.update(ref, {
+      status: nextStatus,
+      ...(parsed.data.reason ? { rejectionReason: parsed.data.reason } : {}),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    if (parsed.data.decision === 'approved' && data.status === 'pending') {
+      tx.update(db.collection('courses').doc(courseId), {
+        enrolledCount: FieldValue.increment(1),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+  });
+
+  await db.collection('learningNotifications').add({
+    userId,
+    courseId,
+    title: parsed.data.decision === 'approved' ? 'Enrolment Approved' : 'Enrolment Update',
+    message:
+      parsed.data.decision === 'approved'
+        ? `Your enrolment in ${courseTitle} is approved.`
+        : `Your enrolment in ${courseTitle} was declined.${parsed.data.reason ? ` Reason: ${parsed.data.reason}` : ''}`,
+    category: 'enrolment',
+    read: false,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true };
+});
+
+// 45. getAuthorizedMediaUrl
+export const getAuthorizedMediaUrl = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  const schema = z.object({ assetId: z.string().min(1) });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'assetId is required.');
+
+  const assetSnap = await db.collection('courseAssets').doc(parsed.data.assetId).get();
+  if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found.');
+  const asset = assetSnap.data()!;
+
+  if (asset.visibility !== 'course_thumbnail') {
+    const isManager = caller.role === 'admin' || caller.role === 'learning_manager';
+    if (!isManager) {
+      const enrollSnap = await db.collection('courseEnrollments').doc(`${asset.courseId}_${caller.uid}`).get();
+      const enrolled = enrollSnap.exists && ['approved', 'enrolled', 'completed'].includes(enrollSnap.data()?.status);
+      if (!enrolled) {
+        await assertCourseInstructorOrManager(caller, asset.courseId);
+      }
+    }
+  }
+
+  try {
+    const file = getStorage().bucket().file(asset.storagePath);
+    const [signedUrl] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 15 * 60 * 1000,
+    });
+    return { url: signedUrl, mimeType: asset.mimeType, storagePath: asset.storagePath };
+  } catch {
+    return { url: null, mimeType: asset.mimeType, storagePath: asset.storagePath };
+  }
+});
+
+// 46. upsertAssessmentQuestion (Separates question prompt from backend answer key)
+export const upsertAssessmentQuestion = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['instructor', 'mentor', 'learning_manager', 'admin']);
+  const schema = z.object({
+    questionId: z.string().optional(),
+    assessmentId: z.string().min(1),
+    courseId: z.string().min(1),
+    orderIndex: z.number().int().min(1),
+    questionType: z.enum(['mcq', 'true_false', 'short_answer', 'written']),
+    prompt: z.string().min(4).max(1000).transform(sanitize),
+    options: z.array(z.string().max(300)).max(6).optional(),
+    points: z.number().int().min(1).max(100),
+    correctOptionIndex: z.number().int().min(0).max(5).optional(),
+    correctBoolean: z.boolean().optional(),
+    expectedKeywords: z.array(z.string().max(80)).max(10).optional(),
+    explanation: z.string().max(500).transform(sanitize).optional(),
+  });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Invalid question payload.');
+  const d = parsed.data;
+  await assertCourseInstructorOrManager(caller, d.courseId);
+
+  const qRef = d.questionId ? db.collection('assessmentQuestions').doc(d.questionId) : db.collection('assessmentQuestions').doc();
+  const keyRef = db.collection('assessmentAnswerKeys').doc(qRef.id);
+
+  await db.runTransaction(async (tx) => {
+    tx.set(qRef, {
+      id: qRef.id,
+      assessmentId: d.assessmentId,
+      courseId: d.courseId,
+      orderIndex: d.orderIndex,
+      questionType: d.questionType,
+      prompt: d.prompt,
+      options: d.options || [],
+      points: d.points,
+      createdBy: caller.uid,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    tx.set(keyRef, {
+      questionId: qRef.id,
+      assessmentId: d.assessmentId,
+      courseId: d.courseId,
+      ...(d.correctOptionIndex !== undefined ? { correctOptionIndex: d.correctOptionIndex } : {}),
+      ...(d.correctBoolean !== undefined ? { correctBoolean: d.correctBoolean } : {}),
+      ...(d.expectedKeywords ? { expectedKeywords: d.expectedKeywords } : {}),
+      ...(d.explanation ? { explanation: d.explanation } : {}),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return { questionId: qRef.id };
+});
+
+// 47. submitAssessmentAttempt (Server-side Auto-Grading)
+export const submitAssessmentAttempt = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  const schema = z.object({
+    assessmentId: z.string().min(1),
+    courseId: z.string().min(1),
+    answers: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Invalid assessment submission.');
+
+  const { assessmentId, courseId, answers } = parsed.data;
+  const enrollSnap = await db.collection('courseEnrollments').doc(`${courseId}_${caller.uid}`).get();
+  if (!enrollSnap.exists || !['approved', 'enrolled', 'completed'].includes(enrollSnap.data()?.status)) {
+    throw new HttpsError('permission-denied', 'Enrolment in this course is required.');
+  }
+
+  const [assessmentSnap, questionsSnap, keysSnap, prevAttemptsSnap] = await Promise.all([
+    db.collection('assessments').doc(assessmentId).get(),
+    db.collection('assessmentQuestions').where('assessmentId', '==', assessmentId).get(),
+    db.collection('assessmentAnswerKeys').where('assessmentId', '==', assessmentId).get(),
+    db.collection('assessmentAttempts').where('assessmentId', '==', assessmentId).where('userId', '==', caller.uid).get(),
+  ]);
+  if (!assessmentSnap.exists) throw new HttpsError('not-found', 'Assessment not found.');
+  const assessment = assessmentSnap.data()!;
+  const maxAttempts = Number(assessment.maxAttempts || 3);
+  if (prevAttemptsSnap.size >= maxAttempts) {
+    throw new HttpsError('failed-precondition', `Maximum attempt limit (${maxAttempts}) reached.`);
+  }
+
+  const keyByQid = new Map(keysSnap.docs.map((d) => [d.id, d.data()]));
+  let totalPoints = 0;
+  let earnedPoints = 0;
+  let hasManualQuestion = false;
+
+  for (const qDoc of questionsSnap.docs) {
+    const q = qDoc.data();
+    const pts = Number(q.points || 1);
+    totalPoints += pts;
+    const key = keyByQid.get(qDoc.id);
+    const ans = answers[qDoc.id];
+    if (q.questionType === 'mcq' && key && Number(ans) === Number(key.correctOptionIndex)) {
+      earnedPoints += pts;
+    } else if (q.questionType === 'true_false' && key && Boolean(ans) === Boolean(key.correctBoolean)) {
+      earnedPoints += pts;
+    } else if (q.questionType === 'short_answer' && key && Array.isArray(key.expectedKeywords) && typeof ans === 'string') {
+      const lower = ans.toLowerCase();
+      if (key.expectedKeywords.some((kw: string) => lower.includes(String(kw).toLowerCase()))) {
+        earnedPoints += pts;
+      }
+    } else if (q.questionType === 'written') {
+      hasManualQuestion = true;
+    }
+  }
+
+  const scorePercent = totalPoints === 0 ? 100 : Math.round((earnedPoints / totalPoints) * 100);
+  const passMark = Number(assessment.passMarkPercent || 70);
+  const passed = !hasManualQuestion && scorePercent >= passMark;
+
+  const attemptRef = db.collection('assessmentAttempts').doc();
+  await attemptRef.set({
+    id: attemptRef.id,
+    assessmentId,
+    courseId,
+    userId: caller.uid,
+    learnerName: caller.fullName,
+    attemptNumber: prevAttemptsSnap.size + 1,
+    answers,
+    scorePercent,
+    earnedPoints,
+    totalPoints,
+    passed,
+    status: hasManualQuestion ? 'submitted' : 'graded',
+    submittedAt: FieldValue.serverTimestamp(),
+    ...(hasManualQuestion ? {} : { gradedAt: FieldValue.serverTimestamp(), gradedBy: 'Auto-Grader' }),
+  });
+
+  if (!hasManualQuestion) {
+    await recalculateCourseProgressAndIssue(courseId, caller.uid);
+  }
+
+  return { attemptId: attemptRef.id, scorePercent, earnedPoints, totalPoints, passed };
+});
+
+// 48. gradeAssignmentSubmission
+export const gradeAssignmentSubmission = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['instructor', 'mentor', 'learning_manager', 'admin']);
+  const schema = z.object({
+    submissionId: z.string().min(1),
+    scorePercent: z.number().min(0).max(100),
+    instructorFeedback: z.string().min(2).max(1000).transform(sanitize),
+    requestResubmit: z.boolean().default(false),
+  });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Valid grade and feedback required.');
+
+  const subRef = db.collection('assignmentSubmissions').doc(parsed.data.submissionId);
+  const subSnap = await subRef.get();
+  if (!subSnap.exists) throw new HttpsError('not-found', 'Assignment submission not found.');
+  const sub = subSnap.data()!;
+  await assertCourseInstructorOrManager(caller, sub.courseId);
+
+  const nextStatus = parsed.data.requestResubmit ? 'resubmit_requested' : 'graded';
+  await subRef.update({
+    status: nextStatus,
+    scorePercent: parsed.data.scorePercent,
+    instructorFeedback: parsed.data.instructorFeedback,
+    gradedBy: caller.fullName,
+    gradedAt: FieldValue.serverTimestamp(),
+  });
+
+  await db.collection('learningNotifications').add({
+    userId: sub.userId,
+    courseId: sub.courseId,
+    title: nextStatus === 'graded' ? 'Assignment Graded' : 'Resubmission Requested',
+    message: `Your assignment was reviewed (${parsed.data.scorePercent}%). Feedback: ${parsed.data.instructorFeedback}`,
+    category: 'assessment',
+    read: false,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  if (nextStatus === 'graded') {
+    await recalculateCourseProgressAndIssue(sub.courseId, sub.userId);
+  }
+  return { ok: true, status: nextStatus };
+});
+
+// 49. issueCourseCertificate & 50. revokeCourseCertificate
+export const issueCourseCertificate = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['learning_manager', 'admin']);
+  const schema = z.object({ courseId: z.string().min(1), userId: z.string().min(1) });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'courseId and userId required.');
+
+  const [courseSnap, userSnap] = await Promise.all([
+    db.collection('courses').doc(parsed.data.courseId).get(),
+    db.collection('users').doc(parsed.data.userId).get(),
+  ]);
+  if (!courseSnap.exists || !userSnap.exists) throw new HttpsError('not-found', 'Course or learner not found.');
+
+  const courseData = courseSnap.data()!;
+  const userData = userSnap.data()!;
+  const isMinor = userData.ageCategory === 'child_5_17' || Number(userData.calculatedAge || 18) < 18;
+  const certificateNumber = `BCA-CERT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const qrToken = `CERTQR-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+  const completionDate = new Date().toISOString().slice(0, 10);
+  const learnerDisplayName = maskDisplayNameForMinorCertificate(userData.fullName || 'BCA Learner', isMinor);
+  const instructorSignatory = Array.isArray(courseData.instructorNames) && courseData.instructorNames[0]
+    ? String(courseData.instructorNames[0])
+    : 'BCA Lead Instructor';
+
+  await db.runTransaction(async (tx) => {
+    tx.set(db.collection('certificates').doc(`${parsed.data.courseId}_${parsed.data.userId}`), {
+      id: `${parsed.data.courseId}_${parsed.data.userId}`,
+      certificateNumber,
+      courseId: parsed.data.courseId,
+      courseTitle: courseData.title,
+      userId: parsed.data.userId,
+      learnerDisplayName,
+      completionDate,
+      instructorSignatory,
+      learningManagerSignatory: caller.fullName,
+      qrToken,
+      status: 'issued',
+      issuedAt: new Date().toISOString(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.set(db.collection('certificateVerifications').doc(certificateNumber), {
+      certificateNumber,
+      courseTitle: courseData.title,
+      learnerDisplayName,
+      completionDate,
+      instructorSignatory,
+      status: 'issued',
+      qrToken,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  await writeAuditLog({
+    action: 'LMS_CERTIFICATE_ISSUED',
+    performedBy: caller.fullName,
+    performedByRole: caller.role,
+    targetEntity: 'certificates',
+    targetId: certificateNumber,
+    details: `Issued certificate ${certificateNumber} for course ${courseData.title}`,
+  });
+
+  return { certificateNumber, qrToken };
+});
+
+export const revokeCourseCertificate = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['learning_manager', 'admin']);
+  const schema = z.object({
+    certificateId: z.string().min(1),
+    reason: z.string().min(5).max(300).transform(sanitize),
+  });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Valid certificateId and reason are required.');
+
+  const certRef = db.collection('certificates').doc(parsed.data.certificateId);
+  const certSnap = await certRef.get();
+  if (!certSnap.exists) throw new HttpsError('not-found', 'Certificate not found.');
+  const cert = certSnap.data()!;
+
+  await db.runTransaction(async (tx) => {
+    tx.update(certRef, {
+      status: 'revoked',
+      revokedReason: parsed.data.reason,
+      revokedBy: caller.fullName,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.update(db.collection('certificateVerifications').doc(cert.certificateNumber), {
+      status: 'revoked',
+      revokedAt: new Date().toISOString(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  await writeAuditLog({
+    action: 'LMS_CERTIFICATE_REVOKED',
+    performedBy: caller.fullName,
+    performedByRole: caller.role,
+    targetEntity: 'certificates',
+    targetId: cert.certificateNumber,
+    details: `Revoked certificate ${cert.certificateNumber}: ${parsed.data.reason}`,
+  });
+
+  return { ok: true };
+});
+
+// 51. dispatchLiveClassReminders
+export const dispatchLiveClassReminders = onCall(async (request) => {
+  const caller = await getCallerContext(request);
+  assertRole(caller.role, ['instructor', 'learning_manager', 'admin']);
+  const schema = z.object({ sessionId: z.string().min(1), leadTime: z.enum(['24h', '1h', 'immediate']).default('1h') });
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'sessionId required.');
+
+  const sessionSnap = await db.collection('courseSessions').doc(parsed.data.sessionId).get();
+  if (!sessionSnap.exists) throw new HttpsError('not-found', 'Session not found.');
+  const session = sessionSnap.data()!;
+  await assertCourseInstructorOrManager(caller, session.courseId);
+
+  const enrollSnap = await db
+    .collection('courseEnrollments')
+    .where('courseId', '==', session.courseId)
+    .where('status', 'in', ['enrolled', 'approved'])
+    .get();
+
+  const batch = db.batch();
+  enrollSnap.docs.forEach((docSnap) => {
+    const notifId = `rem_${session.id}_${parsed.data.leadTime}_${docSnap.data().userId}`;
+    batch.set(db.collection('learningNotifications').doc(notifId), {
+      id: notifId,
+      userId: docSnap.data().userId,
+      courseId: session.courseId,
+      sessionId: session.id,
+      title: `Live Class Reminder (${parsed.data.leadTime})`,
+      message: `${session.title} starts ${session.scheduledDate} at ${session.startTimeKampala} (Kampala EAT).`,
+      category: 'live_class_reminder',
+      reminderLeadTime: parsed.data.leadTime,
+      read: false,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  await batch.commit();
+
+  return { notifiedCount: enrollSnap.size };
 });
 
 

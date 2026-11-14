@@ -94,7 +94,15 @@ export default defineConfig(() => {
               handler: 'NetworkOnly',
             },
             {
+              urlPattern: /^https:\/\/storage\.googleapis\.com\/.*/i,
+              handler: 'NetworkOnly',
+            },
+            {
               urlPattern: /^https:\/\/.*\.cloudfunctions\.net\/.*/i,
+              handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: /^https:\/\/.*\.run\.app\/.*/i,
               handler: 'NetworkOnly',
             },
           ],

@@ -1,4 +1,12 @@
-export type UserRole = 'boy' | 'guardian' | 'mentor' | 'partner' | 'coordinator' | 'admin';
+export type UserRole =
+  | 'boy'
+  | 'guardian'
+  | 'mentor'
+  | 'partner'
+  | 'coordinator'
+  | 'instructor'
+  | 'learning_manager'
+  | 'admin';
 
 export type UserStatus = 'active' | 'pending_guardian_consent' | 'pending_vetting' | 'suspended';
 
@@ -21,6 +29,9 @@ export interface AppUser {
   status: UserStatus;
   ageCategory?: AgeCategory;
   safeguardingCleared?: boolean;
+  instructorAuthorized?: boolean;
+  instructorBio?: string;
+  instructorSpecialty?: string;
   assignedCaseIds?: string[];
   membershipNumber?: string;
   membershipIssuedAt?: string;
@@ -509,3 +520,401 @@ export interface CmsSettingsBundle {
   status: CmsStatus;
   updatedAt: string;
 }
+
+// =========================================================================
+// BCA ONLINE SKILLING & DIGITAL LEARNING MANAGEMENT SYSTEM (LMS)
+// =========================================================================
+
+export type CourseStatus = 'draft' | 'pending_approval' | 'published' | 'unpublished' | 'archived';
+export type CourseFormat = 'self_paced' | 'instructor_led' | 'blended';
+export type CourseLevel = 'beginner' | 'intermediate' | 'advanced';
+export type CourseAgeEligibility = 'all_5_35' | 'children_5_17' | 'young_adults_18_35' | 'adults_18_plus';
+
+export interface Course {
+  id: string;
+  title: string;
+  description: string;
+  thumbnailUrl?: string;
+  category: string;
+  learningObjectives: string[];
+  targetAudience: string;
+  ageEligibility: CourseAgeEligibility;
+  level: CourseLevel;
+  durationHours: number;
+  prerequisites: string[];
+  instructorIds: string[];
+  instructorNames: string[];
+  learningFormat: CourseFormat;
+  startDate: string;
+  endDate: string;
+  enrolmentCapacity: number;
+  enrolledCount: number;
+  status: CourseStatus;
+  approvalNotes?: string;
+  approvedBy?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CourseModule {
+  id: string;
+  courseId: string;
+  title: string;
+  description: string;
+  orderIndex: number;
+  status: 'draft' | 'published';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LessonType =
+  | 'video'
+  | 'pdf'
+  | 'presentation'
+  | 'audio'
+  | 'text'
+  | 'practical_demo'
+  | 'external_resource'
+  | 'study_notes';
+
+export interface CourseLesson {
+  id: string;
+  courseId: string;
+  moduleId: string;
+  title: string;
+  lessonType: LessonType;
+  orderIndex: number;
+  durationMinutes: number;
+  isRequired: boolean;
+  prerequisiteLessonId?: string;
+  objectives: string[];
+  instructorNotes?: string;
+  textContent?: string;
+  transcript?: string;
+  externalUrl?: string;
+  primaryAssetId?: string;
+  lowBandwidthAssetId?: string;
+  captionsAssetId?: string;
+  studyNotesAssetId?: string;
+  status: 'draft' | 'published';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CourseAssetKind =
+  | 'video'
+  | 'low_bandwidth_video'
+  | 'pdf'
+  | 'presentation'
+  | 'document'
+  | 'audio'
+  | 'image'
+  | 'captions';
+
+export interface CourseAsset {
+  id: string;
+  courseId: string;
+  moduleId?: string;
+  lessonId?: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  assetKind: CourseAssetKind;
+  storagePath: string;
+  provider: 'firebase_storage' | 'external_stream';
+  visibility: 'private_enrolled' | 'course_thumbnail';
+  previewDataUrl?: string;
+  uploadedBy: string;
+  uploadedByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InstructorAssignment {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  instructorUid: string;
+  instructorName: string;
+  roleType: 'lead_instructor' | 'co_instructor';
+  assignedBy: string;
+  assignedByName: string;
+  status: 'active' | 'revoked';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type EnrollmentStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'enrolled'
+  | 'completed'
+  | 'withdrawn';
+
+export interface CourseEnrollment {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  userId: string;
+  learnerName: string;
+  learnerDistrict: string;
+  ageCategory: AgeCategory;
+  isMinor: boolean;
+  guardianConsentVerified: boolean;
+  status: EnrollmentStatus;
+  rejectionReason?: string;
+  progressPercent: number;
+  completedLessonsCount: number;
+  totalLessonsCount: number;
+  learningMinutes: number;
+  enrolledAt: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LessonProgress {
+  id: string;
+  courseId: string;
+  moduleId: string;
+  lessonId: string;
+  userId: string;
+  completed: boolean;
+  lastPositionSeconds: number;
+  watchedSeconds: number;
+  playbackSpeed: number;
+  updatedAt: string;
+}
+
+export type AssessmentType =
+  | 'pre_course'
+  | 'post_course'
+  | 'quiz'
+  | 'written_assignment'
+  | 'file_assignment';
+
+export interface Assessment {
+  id: string;
+  courseId: string;
+  moduleId?: string;
+  title: string;
+  assessmentType: AssessmentType;
+  instructions: string;
+  passMarkPercent: number;
+  maxAttempts: number;
+  availableFrom?: string;
+  dueAt?: string;
+  releaseAnswersAfterSubmit: boolean;
+  status: 'draft' | 'published';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AssessmentQuestionType = 'mcq' | 'true_false' | 'short_answer' | 'written';
+
+export interface AssessmentQuestion {
+  id: string;
+  assessmentId: string;
+  courseId: string;
+  orderIndex: number;
+  questionType: AssessmentQuestionType;
+  prompt: string;
+  options?: string[];
+  points: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssessmentAnswerKey {
+  questionId: string;
+  assessmentId: string;
+  courseId: string;
+  correctOptionIndex?: number;
+  correctBoolean?: boolean;
+  expectedKeywords?: string[];
+  explanation?: string;
+  updatedAt: string;
+}
+
+export interface AssessmentAttempt {
+  id: string;
+  assessmentId: string;
+  courseId: string;
+  userId: string;
+  learnerName: string;
+  attemptNumber: number;
+  answers: Record<string, string | number | boolean>;
+  scorePercent: number;
+  earnedPoints: number;
+  totalPoints: number;
+  passed: boolean;
+  status: 'submitted' | 'graded';
+  feedback?: string;
+  gradedBy?: string;
+  submittedAt: string;
+  gradedAt?: string;
+}
+
+export interface AssignmentSubmission {
+  id: string;
+  assessmentId: string;
+  courseId: string;
+  userId: string;
+  learnerName: string;
+  submissionText: string;
+  fileAssetPath?: string;
+  fileName?: string;
+  status: 'submitted' | 'graded' | 'resubmit_requested';
+  scorePercent?: number;
+  instructorFeedback?: string;
+  gradedBy?: string;
+  submittedAt: string;
+  gradedAt?: string;
+}
+
+export interface CourseSession {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  moduleId?: string;
+  title: string;
+  description: string;
+  instructorUid: string;
+  instructorName: string;
+  scheduledDate: string; // YYYY-MM-DD (Africa/Kampala)
+  startTimeKampala: string; // HH:mm (Africa/Kampala)
+  startsAtIso: string; // Converted UTC ISO timestamp
+  durationMinutes: number;
+  timezone: 'Africa/Kampala';
+  zoomMeetingDocId?: string;
+  manualJoinUrl?: string;
+  capacity?: number;
+  isRecurring: boolean;
+  recurrenceRule?: string;
+  status: 'scheduled' | 'live' | 'completed' | 'cancelled';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ZoomMeetingRecord {
+  id: string;
+  courseId: string;
+  sessionId: string;
+  zoomMeetingId: string; // String to preserve full 64-bit precision
+  topic: string;
+  startTimeUtc: string;
+  durationMinutes: number;
+  timezone: 'Africa/Kampala';
+  hostIdentity: string;
+  status: 'scheduled' | 'started' | 'ended' | 'cancelled';
+  waitingRoom: boolean;
+  joinBeforeHost: boolean;
+  recordingEnabled: boolean;
+  participantRestrictionsApplied: boolean;
+  passcodeProtected: boolean;
+  mode: 'zoom_api' | 'manual_fallback';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthorizedMeetingAccess {
+  sessionId: string;
+  zoomMeetingId: string;
+  topic: string;
+  startsAtIso: string;
+  durationMinutes: number;
+  timezone: string;
+  joinUrl: string;
+  passcode?: string;
+  startUrl?: string; // Returned ONLY to assigned host/instructor/manager/admin
+  safeguardingNotice: string;
+}
+
+export interface SessionAttendance {
+  id: string;
+  sessionId: string;
+  courseId: string;
+  userId: string;
+  learnerName: string;
+  status: 'present' | 'absent' | 'excused';
+  markedBy: string;
+  markedByName: string;
+  notes?: string;
+  recordedAt: string;
+}
+
+export interface CourseAnnouncement {
+  id: string;
+  courseId: string;
+  title: string;
+  message: string;
+  priority: 'normal' | 'urgent';
+  authorUid: string;
+  authorName: string;
+  createdAt: string;
+}
+
+export interface CourseCertificate {
+  id: string;
+  certificateNumber: string;
+  courseId: string;
+  courseTitle: string;
+  userId: string;
+  learnerDisplayName: string;
+  completionDate: string;
+  instructorSignatory: string;
+  learningManagerSignatory: string;
+  qrToken: string;
+  status: 'issued' | 'revoked';
+  revokedReason?: string;
+  revokedBy?: string;
+  issuedAt: string;
+  updatedAt: string;
+}
+
+export interface CertificateVerificationRecord {
+  certificateNumber: string;
+  courseTitle: string;
+  learnerDisplayName: string;
+  completionDate: string;
+  instructorSignatory: string;
+  status: 'issued' | 'revoked';
+  revokedAt?: string;
+  qrToken: string;
+  updatedAt: string;
+}
+
+export interface LearningNotification {
+  id: string;
+  userId: string;
+  courseId?: string;
+  sessionId?: string;
+  title: string;
+  message: string;
+  category: 'enrolment' | 'live_class_reminder' | 'assessment' | 'certificate' | 'announcement';
+  reminderLeadTime?: '24h' | '1h' | 'immediate';
+  read: boolean;
+  createdAt: string;
+}
+
+export interface ZoomConfigStatus {
+  connected: boolean;
+  secretsConfigured: boolean;
+  hostUserIdOrEmail: string;
+  verifiedHostDisplayName?: string;
+  defaultTimezone: 'Africa/Kampala';
+  minorSafeguardingLock: boolean;
+  lastTestedAt?: string;
+  statusMessage: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+

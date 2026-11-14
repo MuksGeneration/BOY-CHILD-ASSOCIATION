@@ -9,6 +9,7 @@ import {
   Goal,
   Question,
   Circle,
+  CircleMembership,
   Programme,
   CircleSession,
   AttendanceRecord,
@@ -33,6 +34,27 @@ import {
   ContactMessage,
   MentorProgressReport,
   UserRole,
+  Course,
+  CourseModule,
+  CourseLesson,
+  CourseAsset,
+  InstructorAssignment,
+  CourseEnrollment,
+  LessonProgress,
+  Assessment,
+  AssessmentQuestion,
+  AssessmentAnswerKey,
+  AssessmentAttempt,
+  AssignmentSubmission,
+  CourseSession,
+  ZoomMeetingRecord,
+  AuthorizedMeetingAccess,
+  SessionAttendance,
+  CourseAnnouncement,
+  CourseCertificate,
+  CertificateVerificationRecord,
+  LearningNotification,
+  ZoomConfigStatus,
 } from '../../types';
 import {
   signInWithEmailAndPassword,
@@ -48,6 +70,7 @@ import {
 import {
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -599,7 +622,7 @@ export const firebaseService = {
         query(collection(db, 'circleMemberships'), where('leadMentorId', '==', uid)),
         (snap) => {
           mockStore.circleMemberships = snap.docs.map((d) =>
-            normalizeDoc<MockCircleMembership>(d.id, d.data())
+            normalizeDoc<CircleMembership>(d.id, d.data())
           );
           mockStore.notifyExternalSubscribers();
         },
@@ -1197,6 +1220,46 @@ export const firebaseService = {
       batch.set(
         doc(db, 'mentorshipCircles', c.id),
         { ...stripUndefined(c as unknown as Record<string, unknown>), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      count += 1;
+    }
+    for (const course of mockStore.courses) {
+      batch.set(
+        doc(db, 'courses', course.id),
+        { ...stripUndefined(course as unknown as Record<string, unknown>), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      count += 1;
+    }
+    for (const mod of mockStore.courseModules) {
+      batch.set(
+        doc(db, 'courseModules', mod.id),
+        { ...stripUndefined(mod as unknown as Record<string, unknown>), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      count += 1;
+    }
+    for (const lesson of mockStore.courseLessons) {
+      batch.set(
+        doc(db, 'courseLessons', lesson.id),
+        { ...stripUndefined(lesson as unknown as Record<string, unknown>), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      count += 1;
+    }
+    for (const assm of mockStore.assessments) {
+      batch.set(
+        doc(db, 'assessments', assm.id),
+        { ...stripUndefined(assm as unknown as Record<string, unknown>), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      count += 1;
+    }
+    for (const qItem of mockStore.assessmentQuestions) {
+      batch.set(
+        doc(db, 'assessmentQuestions', qItem.id),
+        { ...stripUndefined(qItem as unknown as Record<string, unknown>), updatedAt: serverTimestamp() },
         { merge: true }
       );
       count += 1;
@@ -1918,15 +1981,30 @@ export const firebaseService = {
   // ------------------------------------------------------------------
   // Admin, DPPA Data Protection & Notifications
   // ------------------------------------------------------------------
-  async assignUserRole(targetUid: string, newRole: UserRole, safeguardingCleared?: boolean) {
-    mockStore.assignUserRole(targetUid, newRole, safeguardingCleared);
-    const cloudRes = await tryCallable('assignUserRole', { targetUid, newRole, safeguardingCleared });
+  async assignUserRole(
+    targetUid: string,
+    newRole: UserRole,
+    safeguardingCleared?: boolean,
+    instructorAuthorized?: boolean
+  ) {
+    mockStore.assignUserRole(targetUid, newRole, safeguardingCleared, instructorAuthorized);
+    const cloudRes = await tryCallable('assignUserRole', {
+      targetUid,
+      newRole,
+      safeguardingCleared,
+      instructorAuthorized,
+    });
     if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
       const cleared = newRole === 'admin' ? true : Boolean(safeguardingCleared);
+      const canInstruct =
+        newRole === 'instructor' || newRole === 'learning_manager' || newRole === 'admin'
+          ? true
+          : Boolean(instructorAuthorized);
       try {
         await updateDoc(doc(db, 'users', targetUid), {
           role: newRole,
           safeguardingCleared: cleared,
+          instructorAuthorized: canInstruct,
           updatedAt: serverTimestamp(),
         });
       } catch (err) {
@@ -2043,6 +2121,1159 @@ export const firebaseService = {
 
   getAuditLogs(): AuditLogEntry[] {
     return mockStore.auditLogs;
+  },
+
+  // ------------------------------------------------------------------
+  // BCA ONLINE SKILLING & DIGITAL LMS SUBSCRIPTIONS AND MUTATIONS
+  // ------------------------------------------------------------------
+  subscribeLmsData(uid?: string, role?: UserRole, instructorAuthorized?: boolean): Unsubscribe {
+    if (!isFirebaseConfigured || !db) return () => undefined;
+    const unsubs: Unsubscribe[] = [];
+    const isManager = role === 'learning_manager' || role === 'admin';
+    const isInstructorRole =
+      role === 'instructor' || (role === 'mentor' && instructorAuthorized === true);
+
+    const coursesQuery = isManager
+      ? collection(db, 'courses')
+      : isInstructorRole && uid
+      ? collection(db, 'courses')
+      : query(collection(db, 'courses'), where('status', '==', 'published'));
+
+    unsubs.push(
+      onSnapshot(
+        coursesQuery,
+        (snap) => {
+          if (!snap.empty) {
+            const loaded = snap.docs.map((d) => normalizeDoc<Course>(d.id, d.data()));
+            mockStore.courses = isManager
+              ? loaded
+              : loaded.filter(
+                  (c) =>
+                    c.status === 'published' ||
+                    (uid && (c.createdBy === uid || c.instructorIds.includes(uid)))
+                );
+            mockStore.notifyExternalSubscribers();
+          }
+        },
+        (err) => console.warn('Courses listener skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'courseModules'), where('status', '==', 'published')),
+        (snap) => {
+          if (!snap.empty) {
+            mockStore.courseModules = snap.docs.map((d) => normalizeDoc<CourseModule>(d.id, d.data()));
+            mockStore.notifyExternalSubscribers();
+          }
+        },
+        (err) => console.warn('CourseModules listener skipped:', err.message)
+      ),
+      onSnapshot(
+        doc(db, 'systemSettings', 'zoomIntegration'),
+        (snap) => {
+          if (snap.exists()) {
+            const raw = snap.data() as Record<string, unknown>;
+            const payload = (raw.payload || raw) as Record<string, unknown>;
+            mockStore.zoomConfig = normalizeDoc<ZoomConfigStatus>(snap.id, {
+              ...mockStore.zoomConfig,
+              ...payload,
+            });
+            mockStore.notifyExternalSubscribers();
+          }
+        },
+        (err) => console.warn('Zoom integration listener skipped:', err.message)
+      )
+    );
+
+    if (uid && auth?.currentUser) {
+      const enrollQuery = isManager
+        ? collection(db, 'courseEnrollments')
+        : query(collection(db, 'courseEnrollments'), where('userId', '==', uid));
+
+      unsubs.push(
+        onSnapshot(
+          enrollQuery,
+          (snap) => {
+            mockStore.courseEnrollments = snap.docs.map((d) =>
+              normalizeDoc<CourseEnrollment>(d.id, d.data())
+            );
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Enrollments listener skipped:', err.message)
+        ),
+        onSnapshot(
+          isManager
+            ? collection(db, 'certificates')
+            : query(collection(db, 'certificates'), where('userId', '==', uid)),
+          (snap) => {
+            mockStore.certificates = snap.docs.map((d) =>
+              normalizeDoc<CourseCertificate>(d.id, d.data())
+            );
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Certificates listener skipped:', err.message)
+        ),
+        onSnapshot(
+          query(collection(db, 'learningNotifications'), where('userId', '==', uid)),
+          (snap) => {
+            mockStore.learningNotifications = snap.docs
+              .map((d) => normalizeDoc<LearningNotification>(d.id, d.data()))
+              .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('LearningNotifications listener skipped:', err.message)
+        )
+      );
+
+      if (isManager || isInstructorRole) {
+        unsubs.push(
+          onSnapshot(
+            isManager
+              ? collection(db, 'instructorAssignments')
+              : query(collection(db, 'instructorAssignments'), where('instructorUid', '==', uid)),
+            (snap) => {
+              mockStore.instructorAssignments = snap.docs.map((d) =>
+                normalizeDoc<InstructorAssignment>(d.id, d.data())
+              );
+              mockStore.notifyExternalSubscribers();
+            },
+            (err) => console.warn('InstructorAssignments listener skipped:', err.message)
+          )
+        );
+      }
+
+      if (isManager) {
+        unsubs.push(
+          onSnapshot(
+            collection(db, 'users'),
+            (snap) => {
+              const map: Record<string, AppUser> = { ...mockStore.users };
+              snap.docs.forEach((d) => {
+                const u = normalizeDoc<AppUser>(d.id, d.data());
+                map[d.id] = { ...u, uid: u.uid || d.id };
+              });
+              mockStore.users = map;
+              mockStore.notifyExternalSubscribers();
+            },
+            (err) => console.warn('LMS manager users listener skipped:', err.message)
+          ),
+          onSnapshot(
+            collection(db, 'courseSessions'),
+            (snap) => {
+              if (!snap.empty) {
+                mockStore.courseSessions = snap.docs.map((d) => normalizeDoc<CourseSession>(d.id, d.data()));
+                mockStore.notifyExternalSubscribers();
+              }
+            },
+            (err) => console.warn('LMS manager sessions listener skipped:', err.message)
+          )
+        );
+      }
+    }
+
+    return () => unsubs.forEach((u) => u());
+  },
+
+  subscribeCourseWorkspace(courseId: string, uid?: string, role?: UserRole): Unsubscribe {
+    if (!isFirebaseConfigured || !db || !courseId) return () => undefined;
+    const unsubs: Unsubscribe[] = [];
+    const isStaff =
+      role === 'instructor' || role === 'learning_manager' || role === 'admin' || role === 'mentor';
+
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, 'courseModules'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.courseModules.filter((m) => m.courseId !== courseId);
+          mockStore.courseModules = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<CourseModule>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace courseModules skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'courseLessons'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.courseLessons.filter((l) => l.courseId !== courseId);
+          mockStore.courseLessons = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<CourseLesson>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace courseLessons skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'courseAssets'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.courseAssets.filter((a) => a.courseId !== courseId);
+          mockStore.courseAssets = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<CourseAsset>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace courseAssets skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'assessments'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.assessments.filter((a) => a.courseId !== courseId);
+          mockStore.assessments = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<Assessment>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace assessments skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'assessmentQuestions'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.assessmentQuestions.filter((q) => q.courseId !== courseId);
+          mockStore.assessmentQuestions = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<AssessmentQuestion>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace questions skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'courseSessions'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.courseSessions.filter((s) => s.courseId !== courseId);
+          mockStore.courseSessions = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<CourseSession>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace courseSessions skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'zoomMeetings'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.zoomMeetings.filter((m) => m.courseId !== courseId);
+          mockStore.zoomMeetings = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<ZoomMeetingRecord>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace zoomMeetings skipped:', err.message)
+      ),
+      onSnapshot(
+        query(collection(db, 'courseAnnouncements'), where('courseId', '==', courseId)),
+        (snap) => {
+          const others = mockStore.courseAnnouncements.filter((a) => a.courseId !== courseId);
+          mockStore.courseAnnouncements = [
+            ...others,
+            ...snap.docs.map((d) => normalizeDoc<CourseAnnouncement>(d.id, d.data())),
+          ];
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Workspace announcements skipped:', err.message)
+      )
+    );
+
+    if (uid && auth?.currentUser) {
+      unsubs.push(
+        onSnapshot(
+          isStaff
+            ? query(collection(db, 'lessonProgress'), where('courseId', '==', courseId))
+            : query(
+                collection(db, 'lessonProgress'),
+                where('courseId', '==', courseId),
+                where('userId', '==', uid)
+              ),
+          (snap) => {
+            const others = mockStore.lessonProgress.filter((p) => p.courseId !== courseId);
+            mockStore.lessonProgress = [
+              ...others,
+              ...snap.docs.map((d) => normalizeDoc<LessonProgress>(d.id, d.data())),
+            ];
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Workspace lessonProgress skipped:', err.message)
+        ),
+        onSnapshot(
+          isStaff
+            ? query(collection(db, 'assessmentAttempts'), where('courseId', '==', courseId))
+            : query(
+                collection(db, 'assessmentAttempts'),
+                where('courseId', '==', courseId),
+                where('userId', '==', uid)
+              ),
+          (snap) => {
+            const others = mockStore.assessmentAttempts.filter((a) => a.courseId !== courseId);
+            mockStore.assessmentAttempts = [
+              ...others,
+              ...snap.docs.map((d) => normalizeDoc<AssessmentAttempt>(d.id, d.data())),
+            ];
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Workspace attempts skipped:', err.message)
+        ),
+        onSnapshot(
+          isStaff
+            ? query(collection(db, 'assignmentSubmissions'), where('courseId', '==', courseId))
+            : query(
+                collection(db, 'assignmentSubmissions'),
+                where('courseId', '==', courseId),
+                where('userId', '==', uid)
+              ),
+          (snap) => {
+            const others = mockStore.assignmentSubmissions.filter((s) => s.courseId !== courseId);
+            mockStore.assignmentSubmissions = [
+              ...others,
+              ...snap.docs.map((d) => normalizeDoc<AssignmentSubmission>(d.id, d.data())),
+            ];
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Workspace submissions skipped:', err.message)
+        )
+      );
+
+      // Strictly only subscribe to answer keys and attendance roster for staff — NEVER for learners
+      if (isStaff) {
+        unsubs.push(
+          onSnapshot(
+            query(collection(db, 'assessmentAnswerKeys'), where('courseId', '==', courseId)),
+            (snap) => {
+              const others = mockStore.assessmentAnswerKeys.filter((k) => k.courseId !== courseId);
+              mockStore.assessmentAnswerKeys = [
+                ...others,
+                ...snap.docs.map((d) => normalizeDoc<AssessmentAnswerKey>(d.id, d.data())),
+              ];
+              mockStore.notifyExternalSubscribers();
+            },
+            (err) => console.warn('Workspace answerKeys skipped:', err.message)
+          ),
+          onSnapshot(
+            query(collection(db, 'sessionAttendance'), where('courseId', '==', courseId)),
+            (snap) => {
+              const others = mockStore.sessionAttendance.filter((s) => s.courseId !== courseId);
+              mockStore.sessionAttendance = [
+                ...others,
+                ...snap.docs.map((d) => normalizeDoc<SessionAttendance>(d.id, d.data())),
+              ];
+              mockStore.notifyExternalSubscribers();
+            },
+            (err) => console.warn('Workspace attendance skipped:', err.message)
+          ),
+          onSnapshot(
+            query(collection(db, 'courseEnrollments'), where('courseId', '==', courseId)),
+            (snap) => {
+              const others = mockStore.courseEnrollments.filter((e) => e.courseId !== courseId);
+              mockStore.courseEnrollments = [
+                ...others,
+                ...snap.docs.map((d) => normalizeDoc<CourseEnrollment>(d.id, d.data())),
+              ];
+              mockStore.notifyExternalSubscribers();
+            },
+            (err) => console.warn('Workspace enrollments skipped:', err.message)
+          )
+        );
+      }
+    }
+
+    return () => unsubs.forEach((u) => u());
+  },
+
+  // --- Courses & Structure ---
+  getCourses(includeNonPublished = false): Course[] {
+    return includeNonPublished
+      ? mockStore.courses
+      : mockStore.courses.filter((c) => c.status === 'published');
+  },
+
+  getCourseCategories(): string[] {
+    return mockStore.courseCategories;
+  },
+
+  getCourseModules(courseId?: string): CourseModule[] {
+    const list = courseId
+      ? mockStore.courseModules.filter((m) => m.courseId === courseId)
+      : mockStore.courseModules;
+    return [...list].sort((a, b) => a.orderIndex - b.orderIndex);
+  },
+
+  getCourseLessons(courseId?: string, moduleId?: string): CourseLesson[] {
+    return mockStore.courseLessons
+      .filter((l) => (!courseId || l.courseId === courseId) && (!moduleId || l.moduleId === moduleId))
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+  },
+
+  getCourseAssets(courseId?: string, moduleId?: string): CourseAsset[] {
+    return mockStore.courseAssets.filter(
+      (a) => (!courseId || a.courseId === courseId) && (!moduleId || a.moduleId === moduleId)
+    );
+  },
+
+  getInstructorAssignments(uid?: string): InstructorAssignment[] {
+    if (!uid) return mockStore.instructorAssignments;
+    return mockStore.instructorAssignments.filter((a) => a.instructorUid === uid && a.status === 'active');
+  },
+
+  async saveCourseDraft(
+    courseInput: Partial<Course> & { id?: string; title: string; category: string },
+    actorUid: string
+  ): Promise<Course> {
+    const saved = mockStore.upsertCourseDraft(courseInput, actorUid);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(
+          doc(db, 'courses', saved.id),
+          {
+            ...stripUndefined(saved as unknown as Record<string, unknown>),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `courses/${saved.id}`);
+      }
+    }
+    return saved;
+  },
+
+  async submitCourseForApproval(courseId: string, actorUid: string) {
+    const existing = mockStore.courses.find((c) => c.id === courseId);
+    if (!existing) throw new Error('Course not found.');
+    mockStore.upsertCourseDraft({ ...existing, status: 'pending_approval' }, actorUid);
+    const cloudRes = await tryCallable('submitCourseForApproval', { courseId });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'courses', courseId), {
+          status: 'pending_approval',
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `courses/${courseId}`);
+      }
+    }
+  },
+
+  async reviewCoursePublication(
+    courseId: string,
+    status: Course['status'],
+    actorUid: string,
+    approvalNotes?: string
+  ) {
+    mockStore.reviewCoursePublication(courseId, status, actorUid, approvalNotes);
+    const cloudRes = await tryCallable('reviewCoursePublication', {
+      courseId,
+      status,
+      approvalNotes,
+    });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'courses', courseId), {
+          status,
+          approvedBy: auth.currentUser.displayName || actorUid,
+          ...(approvalNotes ? { approvalNotes } : {}),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `courses/${courseId}`);
+      }
+    }
+  },
+
+  async assignCourseInstructor(
+    courseId: string,
+    instructorUid: string,
+    actorUid: string,
+    roleType: 'lead_instructor' | 'co_instructor' = 'lead_instructor',
+    authorizeMentor = true
+  ): Promise<InstructorAssignment> {
+    const assignment = mockStore.assignInstructorToCourse(
+      courseId,
+      instructorUid,
+      actorUid,
+      roleType,
+      authorizeMentor
+    );
+    const cloudRes = await tryCallable('assignCourseInstructor', {
+      courseId,
+      instructorUid,
+      roleType,
+      authorizeMentorForInstruction: authorizeMentor,
+    });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(doc(db, 'instructorAssignments', assignment.id), {
+          ...stripUndefined(assignment as unknown as Record<string, unknown>),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `instructorAssignments/${assignment.id}`);
+      }
+    }
+    return assignment;
+  },
+
+  async saveCourseModule(
+    input: Omit<CourseModule, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }
+  ): Promise<CourseModule> {
+    const saved = mockStore.upsertCourseModule(input);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(
+          doc(db, 'courseModules', saved.id),
+          {
+            ...stripUndefined(saved as unknown as Record<string, unknown>),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `courseModules/${saved.id}`);
+      }
+    }
+    return saved;
+  },
+
+  async saveCourseLesson(
+    input: Omit<CourseLesson, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }
+  ): Promise<CourseLesson> {
+    const saved = mockStore.upsertCourseLesson(input);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(
+          doc(db, 'courseLessons', saved.id),
+          {
+            ...stripUndefined(saved as unknown as Record<string, unknown>),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `courseLessons/${saved.id}`);
+      }
+    }
+    return saved;
+  },
+
+  async saveCourseAsset(
+    asset: Omit<CourseAsset, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }
+  ): Promise<CourseAsset> {
+    const saved = mockStore.addCourseAsset(asset);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(doc(db, 'courseAssets', saved.id), {
+          ...stripUndefined(saved as unknown as Record<string, unknown>),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `courseAssets/${saved.id}`);
+      }
+    }
+    return saved;
+  },
+
+  async removeCourseAsset(assetId: string) {
+    mockStore.deleteCourseAsset(assetId);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await deleteDoc(doc(db, 'courseAssets', assetId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `courseAssets/${assetId}`);
+      }
+    }
+  },
+
+  async getAuthorizedMediaUrl(assetId: string): Promise<{ url: string | null; mimeType: string; storagePath: string }> {
+    const asset = mockStore.courseAssets.find((a) => a.id === assetId);
+    const cloudRes = await tryCallable<
+      { assetId: string },
+      { url: string | null; mimeType: string; storagePath: string }
+    >('getAuthorizedMediaUrl', { assetId });
+    if (cloudRes) return cloudRes;
+    return {
+      url: asset?.previewDataUrl || null,
+      mimeType: asset?.mimeType || 'application/octet-stream',
+      storagePath: asset?.storagePath || '',
+    };
+  },
+
+  // --- Enrolment & Lesson Progress ---
+  getEnrollments(filters?: { courseId?: string; userId?: string }): CourseEnrollment[] {
+    return mockStore.courseEnrollments.filter((e) => {
+      if (filters?.courseId && e.courseId !== filters.courseId) return false;
+      if (filters?.userId && e.userId !== filters.userId) return false;
+      return true;
+    });
+  },
+
+  async enrollInCourse(courseId: string, userId: string): Promise<CourseEnrollment> {
+    const enroll = mockStore.enrollInCourse(courseId, userId);
+    const cloudRes = await tryCallable<{ courseId: string }, { status: CourseEnrollment['status'] }>(
+      'applyOrEnrollCourse',
+      { courseId }
+    );
+    if (cloudRes) {
+      enroll.status = cloudRes.status;
+    } else if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(doc(db, 'courseEnrollments', enroll.id), {
+          ...stripUndefined(enroll as unknown as Record<string, unknown>),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `courseEnrollments/${enroll.id}`);
+      }
+    }
+    return enroll;
+  },
+
+  async reviewCourseEnrollment(
+    enrollmentId: string,
+    decision: 'approved' | 'rejected',
+    reason?: string
+  ) {
+    mockStore.reviewCourseEnrollment(enrollmentId, decision, reason);
+    const cloudRes = await tryCallable('reviewCourseEnrollment', { enrollmentId, decision, reason });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'courseEnrollments', enrollmentId), {
+          status: decision === 'approved' ? 'enrolled' : 'rejected',
+          ...(reason ? { rejectionReason: reason } : {}),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `courseEnrollments/${enrollmentId}`);
+      }
+    }
+  },
+
+  getLessonProgress(courseId: string, userId: string): LessonProgress[] {
+    return mockStore.lessonProgress.filter((p) => p.courseId === courseId && p.userId === userId);
+  },
+
+  async saveLessonProgress(params: {
+    courseId: string;
+    moduleId: string;
+    lessonId: string;
+    userId: string;
+    completed?: boolean;
+    lastPositionSeconds?: number;
+    watchedSecondsDelta?: number;
+    playbackSpeed?: number;
+  }): Promise<LessonProgress> {
+    const rec = mockStore.recordLessonProgress(params);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(
+          doc(db, 'lessonProgress', rec.id),
+          {
+            ...stripUndefined(rec as unknown as Record<string, unknown>),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `lessonProgress/${rec.id}`);
+      }
+    }
+    return rec;
+  },
+
+  // --- Assessments, Questions, Attempts & Assignments ---
+  getAssessments(courseId?: string): Assessment[] {
+    return courseId
+      ? mockStore.assessments.filter((a) => a.courseId === courseId)
+      : mockStore.assessments;
+  },
+
+  getAssessmentQuestions(assessmentId: string): AssessmentQuestion[] {
+    return mockStore.assessmentQuestions
+      .filter((q) => q.assessmentId === assessmentId)
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+  },
+
+  getAssessmentAnswerKeys(assessmentId: string): AssessmentAnswerKey[] {
+    return mockStore.assessmentAnswerKeys.filter((k) => k.assessmentId === assessmentId);
+  },
+
+  async saveAssessment(
+    input: Omit<Assessment, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }
+  ): Promise<Assessment> {
+    const saved = mockStore.upsertAssessment(input);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(
+          doc(db, 'assessments', saved.id),
+          {
+            ...stripUndefined(saved as unknown as Record<string, unknown>),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `assessments/${saved.id}`);
+      }
+    }
+    return saved;
+  },
+
+  async saveAssessmentQuestion(params: {
+    assessmentId: string;
+    courseId: string;
+    orderIndex: number;
+    questionType: AssessmentQuestion['questionType'];
+    prompt: string;
+    options?: string[];
+    points: number;
+    correctOptionIndex?: number;
+    correctBoolean?: boolean;
+    expectedKeywords?: string[];
+    explanation?: string;
+    createdBy: string;
+  }): Promise<AssessmentQuestion> {
+    const saved = mockStore.upsertAssessmentQuestion(params);
+    await tryCallable('upsertAssessmentQuestion', {
+      questionId: saved.id,
+      assessmentId: params.assessmentId,
+      courseId: params.courseId,
+      orderIndex: params.orderIndex,
+      questionType: params.questionType,
+      prompt: params.prompt,
+      options: params.options,
+      points: params.points,
+      correctOptionIndex: params.correctOptionIndex,
+      correctBoolean: params.correctBoolean,
+      expectedKeywords: params.expectedKeywords,
+      explanation: params.explanation,
+    });
+    return saved;
+  },
+
+  getAssessmentAttempts(filters?: { assessmentId?: string; courseId?: string; userId?: string }): AssessmentAttempt[] {
+    return mockStore.assessmentAttempts.filter((a) => {
+      if (filters?.assessmentId && a.assessmentId !== filters.assessmentId) return false;
+      if (filters?.courseId && a.courseId !== filters.courseId) return false;
+      if (filters?.userId && a.userId !== filters.userId) return false;
+      return true;
+    });
+  },
+
+  async submitAssessmentAttempt(
+    assessmentId: string,
+    courseId: string,
+    userId: string,
+    answers: Record<string, string | number | boolean>
+  ): Promise<AssessmentAttempt> {
+    const attempt = mockStore.submitAssessmentAttempt(assessmentId, courseId, userId, answers);
+    const cloudRes = await tryCallable<
+      { assessmentId: string; courseId: string; answers: Record<string, string | number | boolean> },
+      { attemptId: string; scorePercent: number; earnedPoints: number; totalPoints: number; passed: boolean }
+    >('submitAssessmentAttempt', { assessmentId, courseId, answers });
+    if (cloudRes) {
+      attempt.scorePercent = cloudRes.scorePercent;
+      attempt.earnedPoints = cloudRes.earnedPoints;
+      attempt.totalPoints = cloudRes.totalPoints;
+      attempt.passed = cloudRes.passed;
+    } else if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(doc(db, 'assessmentAttempts', attempt.id), {
+          ...stripUndefined(attempt as unknown as Record<string, unknown>),
+          submittedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `assessmentAttempts/${attempt.id}`);
+      }
+    }
+    return attempt;
+  },
+
+  getAssignmentSubmissions(filters?: { courseId?: string; assessmentId?: string; userId?: string }): AssignmentSubmission[] {
+    return mockStore.assignmentSubmissions.filter((s) => {
+      if (filters?.courseId && s.courseId !== filters.courseId) return false;
+      if (filters?.assessmentId && s.assessmentId !== filters.assessmentId) return false;
+      if (filters?.userId && s.userId !== filters.userId) return false;
+      return true;
+    });
+  },
+
+  async submitAssignmentWork(params: {
+    assessmentId: string;
+    courseId: string;
+    userId: string;
+    submissionText: string;
+    fileAssetPath?: string;
+    fileName?: string;
+  }): Promise<AssignmentSubmission> {
+    const sub = mockStore.submitAssignmentWork(params);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(doc(db, 'assignmentSubmissions', sub.id), {
+          ...stripUndefined(sub as unknown as Record<string, unknown>),
+          submittedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `assignmentSubmissions/${sub.id}`);
+      }
+    }
+    return sub;
+  },
+
+  async gradeAssignmentSubmission(
+    submissionId: string,
+    scorePercent: number,
+    feedback: string,
+    graderName: string,
+    requestResubmit = false
+  ) {
+    mockStore.gradeAssignmentSubmission(submissionId, scorePercent, feedback, graderName, requestResubmit);
+    const cloudRes = await tryCallable('gradeAssignmentSubmission', {
+      submissionId,
+      scorePercent,
+      instructorFeedback: feedback,
+      requestResubmit,
+    });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'assignmentSubmissions', submissionId), {
+          status: requestResubmit ? 'resubmit_requested' : 'graded',
+          scorePercent,
+          instructorFeedback: feedback,
+          gradedBy: graderName,
+          gradedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `assignmentSubmissions/${submissionId}`);
+      }
+    }
+  },
+
+  // --- Zoom Integration, Live Sessions & Attendance ---
+  getZoomConfig(): ZoomConfigStatus {
+    return mockStore.zoomConfig;
+  },
+
+  async connectZoomConfiguration(hostUserIdOrEmail: string, actorName: string): Promise<ZoomConfigStatus> {
+    const updated = mockStore.updateZoomConfiguration(hostUserIdOrEmail, actorName);
+    const cloudRes = await tryCallable<
+      { hostUserIdOrEmail: string; defaultTimezone: 'Africa/Kampala'; minorSafeguardingLock: boolean },
+      ZoomConfigStatus
+    >('connectZoomConfiguration', {
+      hostUserIdOrEmail,
+      defaultTimezone: 'Africa/Kampala',
+      minorSafeguardingLock: true,
+    });
+    if (cloudRes) {
+      mockStore.zoomConfig = cloudRes;
+      mockStore.notifyExternalSubscribers();
+      return cloudRes;
+    }
+    return updated;
+  },
+
+  async testZoomConnection(): Promise<ZoomConfigStatus> {
+    const cloudRes = await tryCallable<Record<string, never>, ZoomConfigStatus>('testZoomConnection', {});
+    if (cloudRes) {
+      mockStore.zoomConfig = cloudRes;
+      mockStore.notifyExternalSubscribers();
+      return cloudRes;
+    }
+    return mockStore.testZoomConnectionOfflineHonest();
+  },
+
+  getCourseSessions(courseId?: string): CourseSession[] {
+    const list = courseId
+      ? mockStore.courseSessions.filter((s) => s.courseId === courseId)
+      : mockStore.courseSessions;
+    return [...list].sort((a, b) => new Date(a.startsAtIso).getTime() - new Date(b.startsAtIso).getTime());
+  },
+
+  getZoomMeetings(courseId?: string): ZoomMeetingRecord[] {
+    return courseId
+      ? mockStore.zoomMeetings.filter((m) => m.courseId === courseId)
+      : mockStore.zoomMeetings;
+  },
+
+  async scheduleLiveSession(params: {
+    courseId: string;
+    moduleId?: string;
+    title: string;
+    description: string;
+    instructorUid: string;
+    scheduledDate: string;
+    startTimeKampala: string;
+    durationMinutes: number;
+    isRecurring?: boolean;
+    manualJoinUrl?: string;
+    manualPasscode?: string;
+  }): Promise<CourseSession> {
+    if (isFirebaseConfigured && functions && auth?.currentUser) {
+      try {
+        const fn = httpsCallable<typeof params, { sessionId: string; zoomMeetingId: string; startsAtIso: string }>(
+          functions,
+          'createZoomMeeting'
+        );
+        const res = await fn(params);
+        const session = mockStore.scheduleCourseSession({
+          ...params,
+          manualJoinUrl: params.manualJoinUrl || `https://zoom.us/j/${res.data.zoomMeetingId}`,
+        });
+        session.id = res.data.sessionId;
+        mockStore.notifyExternalSubscribers();
+        return session;
+      } catch (err) {
+        const code = (err as { code?: string })?.code || '';
+        if (code.includes('failed-precondition') || code.includes('permission-denied') || code.includes('unavailable')) {
+          throw err;
+        }
+        console.warn('createZoomMeeting fallback to local/Firestore mode:', err);
+      }
+    }
+    return mockStore.scheduleCourseSession(params);
+  },
+
+  async updateLiveSession(
+    sessionId: string,
+    patch: { title?: string; scheduledDate?: string; startTimeKampala?: string; durationMinutes?: number }
+  ) {
+    const session = mockStore.courseSessions.find((s) => s.id === sessionId);
+    if (!session) throw new Error('Live session not found.');
+    const nextDate = patch.scheduledDate || session.scheduledDate;
+    const nextTime = patch.startTimeKampala || session.startTimeKampala;
+    const utcDate = new Date(`${nextDate}T${nextTime}:00+03:00`);
+    if (Number.isNaN(utcDate.getTime())) throw new Error('Invalid date or Kampala time.');
+
+    Object.assign(session, {
+      ...(patch.title ? { title: patch.title } : {}),
+      scheduledDate: nextDate,
+      startTimeKampala: nextTime,
+      startsAtIso: utcDate.toISOString(),
+      ...(patch.durationMinutes ? { durationMinutes: patch.durationMinutes } : {}),
+      updatedAt: new Date().toISOString(),
+    });
+    mockStore.notifyExternalSubscribers();
+
+    const cloudRes = await tryCallable('updateZoomMeeting', { sessionId, ...patch });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'courseSessions', sessionId), {
+          title: session.title,
+          scheduledDate: session.scheduledDate,
+          startTimeKampala: session.startTimeKampala,
+          startsAtIso: session.startsAtIso,
+          durationMinutes: session.durationMinutes,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `courseSessions/${sessionId}`);
+      }
+    }
+  },
+
+  async cancelLiveSession(sessionId: string, reason?: string) {
+    mockStore.cancelCourseSession(sessionId);
+    const cloudRes = await tryCallable('cancelZoomMeeting', { sessionId, reason });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'courseSessions', sessionId), {
+          status: 'cancelled',
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `courseSessions/${sessionId}`);
+      }
+    }
+  },
+
+  async getAuthorizedMeetingAccess(sessionId: string, callerUid: string): Promise<AuthorizedMeetingAccess> {
+    if (isFirebaseConfigured && functions && auth?.currentUser) {
+      try {
+        const fn = httpsCallable<{ sessionId: string }, AuthorizedMeetingAccess>(
+          functions,
+          'getAuthorizedMeetingDetails'
+        );
+        const res = await fn({ sessionId });
+        return res.data;
+      } catch (err) {
+        const code = (err as { code?: string })?.code || '';
+        if (code.includes('permission-denied') || code.includes('failed-precondition')) {
+          throw err;
+        }
+      }
+    }
+    return mockStore.getAuthorizedMeetingAccess(sessionId, callerUid);
+  },
+
+  async syncLiveSessionStatus(sessionId: string): Promise<{ status: CourseSession['status'] }> {
+    const cloudRes = await tryCallable<{ sessionId: string }, { ok: boolean; status: CourseSession['status'] }>(
+      'syncMeetingStatus',
+      { sessionId }
+    );
+    if (cloudRes) {
+      const s = mockStore.courseSessions.find((item) => item.id === sessionId);
+      if (s) {
+        s.status = cloudRes.status;
+        mockStore.notifyExternalSubscribers();
+      }
+      return { status: cloudRes.status };
+    }
+    const existing = mockStore.courseSessions.find((item) => item.id === sessionId);
+    return { status: existing?.status || 'scheduled' };
+  },
+
+  getSessionAttendance(sessionId?: string, courseId?: string): SessionAttendance[] {
+    return mockStore.sessionAttendance.filter(
+      (a) => (!sessionId || a.sessionId === sessionId) && (!courseId || a.courseId === courseId)
+    );
+  },
+
+  async recordSessionAttendance(params: {
+    sessionId: string;
+    courseId: string;
+    userId: string;
+    learnerName: string;
+    status: SessionAttendance['status'];
+    markedBy: string;
+    markedByName: string;
+  }) {
+    mockStore.recordSessionAttendance(params);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      const id = `${params.sessionId}_${params.userId}`;
+      try {
+        await setDoc(
+          doc(db, 'sessionAttendance', id),
+          { ...params, id, recordedAt: serverTimestamp() },
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `sessionAttendance/${id}`);
+      }
+    }
+  },
+
+  async dispatchLiveClassReminders(sessionId: string, leadTime: '24h' | '1h' | 'immediate' = '1h'): Promise<number> {
+    const cloudRes = await tryCallable<{ sessionId: string; leadTime: string }, { notifiedCount: number }>(
+      'dispatchLiveClassReminders',
+      { sessionId, leadTime }
+    );
+    if (cloudRes) return cloudRes.notifiedCount;
+    const session = mockStore.courseSessions.find((s) => s.id === sessionId);
+    if (!session) return 0;
+    const enrolled = mockStore.courseEnrollments.filter(
+      (e) => e.courseId === session.courseId && ['enrolled', 'approved'].includes(e.status)
+    );
+    enrolled.forEach((e) => {
+      mockStore.learningNotifications.unshift({
+        id: `rem_${session.id}_${leadTime}_${e.userId}`,
+        userId: e.userId,
+        courseId: session.courseId,
+        sessionId: session.id,
+        title: `Live Class Reminder (${leadTime})`,
+        message: `${session.title} starts ${session.scheduledDate} at ${session.startTimeKampala} (Kampala EAT).`,
+        category: 'live_class_reminder',
+        reminderLeadTime: leadTime,
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+    });
+    mockStore.notifyExternalSubscribers();
+    return enrolled.length;
+  },
+
+  // --- Announcements, Certificates & Learning Notifications ---
+  getCourseAnnouncements(courseId?: string): CourseAnnouncement[] {
+    return courseId
+      ? mockStore.courseAnnouncements.filter((a) => a.courseId === courseId)
+      : mockStore.courseAnnouncements;
+  },
+
+  async publishCourseAnnouncement(ann: Omit<CourseAnnouncement, 'id' | 'createdAt'>): Promise<CourseAnnouncement> {
+    const created = mockStore.addCourseAnnouncement(ann);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await setDoc(doc(db, 'courseAnnouncements', created.id), {
+          ...stripUndefined(created as unknown as Record<string, unknown>),
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `courseAnnouncements/${created.id}`);
+      }
+    }
+    return created;
+  },
+
+  getCertificates(userId?: string): CourseCertificate[] {
+    return userId
+      ? mockStore.certificates.filter((c) => c.userId === userId)
+      : mockStore.certificates;
+  },
+
+  async issueCourseCertificate(
+    courseId: string,
+    userId: string,
+    signatoryManager?: string
+  ): Promise<CourseCertificate> {
+    const cert = mockStore.issueCertificate(courseId, userId, signatoryManager);
+    const cloudRes = await tryCallable<
+      { courseId: string; userId: string },
+      { certificateNumber: string; qrToken: string }
+    >('issueCourseCertificate', { courseId, userId });
+    if (cloudRes) {
+      cert.certificateNumber = cloudRes.certificateNumber;
+      cert.qrToken = cloudRes.qrToken;
+    }
+    return cert;
+  },
+
+  async revokeCourseCertificate(certificateId: string, reason: string, actorName: string) {
+    mockStore.revokeCertificate(certificateId, reason, actorName);
+    const cloudRes = await tryCallable('revokeCourseCertificate', { certificateId, reason });
+    if (!cloudRes && isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'certificates', certificateId), {
+          status: 'revoked',
+          revokedReason: reason,
+          revokedBy: actorName,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `certificates/${certificateId}`);
+      }
+    }
+  },
+
+  async verifyCertificateAsync(certNumber: string): Promise<CertificateVerificationRecord | null> {
+    const clean = certNumber.trim().toUpperCase();
+    if (!clean) return null;
+    if (isFirebaseConfigured && db) {
+      try {
+        const snap = await getDoc(doc(db, 'certificateVerifications', clean));
+        if (snap.exists()) {
+          return normalizeDoc<CertificateVerificationRecord>(snap.id, snap.data());
+        }
+      } catch (err) {
+        console.warn('Firestore certificate lookup fallback:', err);
+      }
+    }
+    return isDemoModeEnabled ? mockStore.verifyCertificate(clean) : null;
+  },
+
+  getLearningNotifications(userId: string): LearningNotification[] {
+    return mockStore.learningNotifications.filter((n) => n.userId === userId);
+  },
+
+  async markLearningNotificationRead(notifId: string) {
+    mockStore.markLearningNotificationRead(notifId);
+    if (isFirebaseConfigured && db && auth?.currentUser) {
+      try {
+        await updateDoc(doc(db, 'learningNotifications', notifId), { read: true });
+      } catch (err) {
+        console.warn('Learning notification read sync skipped:', err);
+      }
+    }
   },
 };
 

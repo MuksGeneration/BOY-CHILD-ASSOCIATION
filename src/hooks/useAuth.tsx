@@ -25,7 +25,12 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function buildFallbackLiveUser(fbUser: FirebaseUser, claimRole?: UserRole, claimCleared = false): AppUser {
+function buildFallbackLiveUser(
+  fbUser: FirebaseUser,
+  claimRole?: UserRole,
+  claimCleared = false,
+  claimInstructorAuthorized = false
+): AppUser {
   const isBootstrapAdmin = fbUser.email === 'mukuladavid6@gmail.com' && fbUser.emailVerified;
   const fallbackRole: UserRole = isBootstrapAdmin ? 'admin' : claimRole || 'boy';
   return {
@@ -35,6 +40,7 @@ function buildFallbackLiveUser(fbUser: FirebaseUser, claimRole?: UserRole, claim
     role: fallbackRole,
     status: 'active',
     safeguardingCleared: fallbackRole === 'admin' || claimCleared,
+    instructorAuthorized: fallbackRole === 'admin' || fallbackRole === 'instructor' || fallbackRole === 'learning_manager' || claimInstructorAuthorized,
     emailVerified: fbUser.emailVerified,
     district: 'Kampala',
     createdAt: new Date().toISOString(),
@@ -66,6 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const tokenResult = await fbUser.getIdTokenResult().catch(() => null);
           const claimRole = tokenResult?.claims?.role as UserRole | undefined;
           const claimCleared = Boolean(tokenResult?.claims?.safeguardingCleared);
+          const claimInstructorAuthorized = Boolean(tokenResult?.claims?.instructorAuthorized);
 
           try {
             const snap = await getDoc(doc(db, 'users', fbUser.uid));
@@ -77,14 +84,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 uid: fbUser.uid,
                 role: resolvedRole,
                 safeguardingCleared: resolvedRole === 'admin' || claimCleared || data.safeguardingCleared,
+                instructorAuthorized:
+                  resolvedRole === 'admin' ||
+                  resolvedRole === 'instructor' ||
+                  resolvedRole === 'learning_manager' ||
+                  claimInstructorAuthorized ||
+                  Boolean(data.instructorAuthorized),
                 emailVerified: fbUser.emailVerified,
               });
             } else {
-              setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared));
+              setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared, claimInstructorAuthorized));
             }
           } catch (err) {
             console.warn('Firestore user profile read fallback to token claims:', err);
-            setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared));
+            setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared, claimInstructorAuthorized));
           }
           setIsLiveFirebaseUser(true);
         } else {

@@ -33,6 +33,27 @@ import {
   AttachmentMeta,
   ContactMessage,
   MentorProgressReport,
+  Course,
+  CourseModule,
+  CourseLesson,
+  CourseAsset,
+  InstructorAssignment,
+  CourseEnrollment,
+  LessonProgress,
+  Assessment,
+  AssessmentQuestion,
+  AssessmentAnswerKey,
+  AssessmentAttempt,
+  AssignmentSubmission,
+  CourseSession,
+  ZoomMeetingRecord,
+  AuthorizedMeetingAccess,
+  SessionAttendance,
+  CourseAnnouncement,
+  CourseCertificate,
+  CertificateVerificationRecord,
+  LearningNotification,
+  ZoomConfigStatus,
 } from '../../types';
 
 const INITIAL_PROGRAMMES: Programme[] = [
@@ -306,6 +327,40 @@ const INITIAL_USERS: Record<string, AppUser> = {
     updatedAt: '2026-11-01T09:00:00Z',
     createdBy: 'admin',
   },
+  usr_instructor_musoke: {
+    uid: 'usr_instructor_musoke',
+    email: 'isaac.musoke@boychild.org',
+    fullName: 'Eng. Isaac Musoke',
+    phone: '+256772550190',
+    role: 'instructor',
+    status: 'active',
+    ageCategory: 'adult',
+    instructorAuthorized: true,
+    instructorSpecialty: 'Solar PV Engineering & Digital Electronics',
+    instructorBio: 'Uganda certified solar technician and lead vocational instructor across Kampala and Wakiso circles.',
+    emailVerified: true,
+    district: 'Kampala',
+    town: 'Nakawa',
+    createdAt: '2026-03-01T08:00:00Z',
+    updatedAt: '2026-11-05T08:00:00Z',
+    createdBy: 'usr_admin_kato',
+  },
+  usr_learning_manager_namono: {
+    uid: 'usr_learning_manager_namono',
+    email: 'florence.namono@boychild.org',
+    fullName: 'Florence Namono',
+    phone: '+256752771188',
+    role: 'learning_manager',
+    status: 'active',
+    ageCategory: 'adult',
+    instructorAuthorized: true,
+    emailVerified: true,
+    district: 'Kampala',
+    town: 'Old Kampala',
+    createdAt: '2026-02-01T08:00:00Z',
+    updatedAt: '2026-11-10T08:00:00Z',
+    createdBy: 'usr_admin_kato',
+  },
   usr_admin_kato: {
     uid: 'usr_admin_kato',
     email: 'mukasa.kato@boychild.org',
@@ -315,6 +370,7 @@ const INITIAL_USERS: Record<string, AppUser> = {
     status: 'active',
     ageCategory: 'adult',
     safeguardingCleared: true,
+    instructorAuthorized: true,
     emailVerified: true,
     district: 'Kampala',
     town: 'Kololo',
@@ -1037,6 +1093,28 @@ class MockStore {
   cmsSettings: CmsSettingsBundle;
   contactMessages: ContactMessage[];
   progressReports: MentorProgressReport[];
+  courses: Course[];
+  courseModules: CourseModule[];
+  courseLessons: CourseLesson[];
+  courseAssets: CourseAsset[];
+  instructorAssignments: InstructorAssignment[];
+  courseEnrollments: CourseEnrollment[];
+  lessonProgress: LessonProgress[];
+  assessments: Assessment[];
+  assessmentQuestions: AssessmentQuestion[];
+  assessmentAnswerKeys: AssessmentAnswerKey[];
+  assessmentAttempts: AssessmentAttempt[];
+  assignmentSubmissions: AssignmentSubmission[];
+  courseSessions: CourseSession[];
+  zoomMeetings: ZoomMeetingRecord[];
+  zoomMeetingSecrets: Record<string, { joinUrl: string; startUrl: string; passcode: string }>;
+  sessionAttendance: SessionAttendance[];
+  courseAnnouncements: CourseAnnouncement[];
+  certificates: CourseCertificate[];
+  certificateVerifications: Record<string, CertificateVerificationRecord>;
+  learningNotifications: LearningNotification[];
+  zoomConfig: ZoomConfigStatus;
+  courseCategories: string[];
   currentUserUid: string;
 
   constructor() {
@@ -1109,6 +1187,617 @@ class MockStore {
     this.cmsSettings = { ...INITIAL_CMS_SETTINGS };
     this.contactMessages = [...INITIAL_CONTACT_MESSAGES];
     this.progressReports = [...INITIAL_PROGRESS_REPORTS];
+    this.courseCategories = [
+      'Solar & Clean Energy',
+      'Digital Literacy & Coding',
+      'Character & Leadership',
+      'Financial Stewardship',
+      'Vocational Trades',
+    ];
+    this.courses = [
+      {
+        id: 'course_solar_pv',
+        title: 'Solar PV & Off-Grid Electronics Fundamentals',
+        description:
+          'Hands-on vocational skilling equipping Ugandan youth with safe DC wiring, solar charge controller sizing, battery maintenance, and household micro-enterprise skills.',
+        thumbnailUrl: '/images/programme_skills_1794461658653.jpg',
+        category: 'Solar & Clean Energy',
+        learningObjectives: [
+          'Calculate off-grid home solar panel and battery capacity safely',
+          'Wire 12V charge controllers and DC lighting protection',
+          'Troubleshoot common household solar lantern faults',
+        ],
+        targetAudience: 'Boys 13–17 (with guardian consent) and Young Adults 18–35',
+        ageEligibility: 'all_5_35',
+        level: 'beginner',
+        durationHours: 12,
+        prerequisites: ['Basic arithmetic literacy'],
+        instructorIds: ['usr_instructor_musoke'],
+        instructorNames: ['Eng. Isaac Musoke'],
+        learningFormat: 'blended',
+        startDate: '2026-11-01',
+        endDate: '2027-01-31',
+        enrolmentCapacity: 60,
+        enrolledCount: 2,
+        status: 'published',
+        approvedBy: 'Florence Namono',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-15T09:00:00Z',
+        updatedAt: '2026-11-10T10:00:00Z',
+      },
+      {
+        id: 'course_digital_literacy',
+        title: 'Digital Literacy, Spreadsheets & Safe Internet Citizenship',
+        description:
+          'Self-paced foundation covering document creation, spreadsheets for small community enterprises, online child safeguarding, and cyber hygiene.',
+        thumbnailUrl: '/images/hero_boys_circle_1794461657319.jpg',
+        category: 'Digital Literacy & Coding',
+        learningObjectives: [
+          'Create formatted study documents and community budgets',
+          'Recognise and report online grooming or cyberbullying via Sauti 116',
+          'Use cloud collaboration responsibly on shared circle computers',
+        ],
+        targetAudience: 'All BCA boys and young men aged 10–35',
+        ageEligibility: 'all_5_35',
+        level: 'beginner',
+        durationHours: 8,
+        prerequisites: [],
+        instructorIds: ['usr_instructor_musoke'],
+        instructorNames: ['Eng. Isaac Musoke'],
+        learningFormat: 'self_paced',
+        startDate: '2026-10-20',
+        endDate: '2027-03-31',
+        enrolmentCapacity: 120,
+        enrolledCount: 1,
+        status: 'published',
+        approvedBy: 'Florence Namono',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-20T09:00:00Z',
+        updatedAt: '2026-11-09T12:00:00Z',
+      },
+      {
+        id: 'course_financial_stewardship',
+        title: 'Young Adult Financial Stewardship & Agribusiness Accounting',
+        description:
+          'Instructor-led cohort focused on SACCO saving discipline, mobile money bookkeeping, poultry/horticulture costing, and ethical entrepreneurship in Uganda.',
+        thumbnailUrl: '/images/programme_mentorship_1794461658375.jpg',
+        category: 'Financial Stewardship',
+        learningObjectives: [
+          'Separate personal living expenses from micro-business cashflow',
+          'Prepare a 3-month enterprise profit & loss ledger',
+          'Evaluate SACCO and cooperative credit responsibly',
+        ],
+        targetAudience: 'Young Adults aged 18–35',
+        ageEligibility: 'young_adults_18_35',
+        level: 'intermediate',
+        durationHours: 10,
+        prerequisites: ['Completion of Basic Literacy or Secondary S.2'],
+        instructorIds: ['usr_instructor_musoke'],
+        instructorNames: ['Eng. Isaac Musoke'],
+        learningFormat: 'instructor_led',
+        startDate: '2026-11-10',
+        endDate: '2027-02-15',
+        enrolmentCapacity: 40,
+        enrolledCount: 1,
+        status: 'published',
+        approvedBy: 'Florence Namono',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-11-01T08:00:00Z',
+        updatedAt: '2026-11-11T08:00:00Z',
+      },
+      {
+        id: 'course_carpentry_draft',
+        title: 'Sustainable Timber Joinery & Workshop Safety',
+        description: 'Pending approval course covering hand tool sharpening, mortise joints, and safety goggles discipline.',
+        thumbnailUrl: '/images/programme_wellbeing_1794461659186.jpg',
+        category: 'Vocational Trades',
+        learningObjectives: ['Apply workshop PPE safety rules consistently'],
+        targetAudience: 'Boys and young men 14–28',
+        ageEligibility: 'all_5_35',
+        level: 'beginner',
+        durationHours: 14,
+        prerequisites: [],
+        instructorIds: ['usr_instructor_musoke'],
+        instructorNames: ['Eng. Isaac Musoke'],
+        learningFormat: 'blended',
+        startDate: '2026-12-01',
+        endDate: '2027-03-01',
+        enrolmentCapacity: 30,
+        enrolledCount: 0,
+        status: 'pending_approval',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-11-11T09:00:00Z',
+        updatedAt: '2026-11-11T09:00:00Z',
+      },
+    ];
+    this.courseModules = [
+      {
+        id: 'mod_solar_1',
+        courseId: 'course_solar_pv',
+        title: 'Module 1: Electrical Safety & Solar Components',
+        description: 'DC polarity, fuse protection, and multimeter fundamentals for Ugandan off-grid homes.',
+        orderIndex: 1,
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-15T09:30:00Z',
+        updatedAt: '2026-10-15T09:30:00Z',
+      },
+      {
+        id: 'mod_solar_2',
+        courseId: 'course_solar_pv',
+        title: 'Module 2: System Sizing & Charge Controller Wiring',
+        description: 'Matching 12V panels, AGM batteries, and PWM/MPPT controllers.',
+        orderIndex: 2,
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-16T09:30:00Z',
+        updatedAt: '2026-10-16T09:30:00Z',
+      },
+      {
+        id: 'mod_dig_1',
+        courseId: 'course_digital_literacy',
+        title: 'Module 1: Cyber Safety & Responsible Digital Footprint',
+        description: 'Protecting privacy under Uganda DPPA 2019 and staying safe online.',
+        orderIndex: 1,
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-20T09:30:00Z',
+        updatedAt: '2026-10-20T09:30:00Z',
+      },
+    ];
+    this.courseLessons = [
+      {
+        id: 'les_solar_1',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_1',
+        title: '1.1 Why DC Polarity Matters in Home Solar Kits',
+        lessonType: 'text',
+        orderIndex: 1,
+        durationMinutes: 15,
+        isRequired: true,
+        objectives: ['Distinguish positive (red) and negative (black) DC leads', 'Select inline blade fuses correctly'],
+        instructorNotes: 'Low-bandwidth readable text version paired with diagram notes for rural learners.',
+        textContent:
+          'Before touching any battery terminal, always verify polarity with a multimeter set to DC Volts (20V range). Reversing leads on a charge controller damages MOSFET protection diodes instantly. Connect Battery -> Charge Controller FIRST, then Solar Panel, and finally DC Loads so the controller auto-detects 12V or 24V system voltage safely.',
+        transcript:
+          'Welcome brothers to Module 1. Today in Kampala Nakawa Workshop we demonstrate connecting a 12V 100Ah battery before the 150W solar panel...',
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-15T10:00:00Z',
+        updatedAt: '2026-10-15T10:00:00Z',
+      },
+      {
+        id: 'les_solar_2',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_1',
+        title: '1.2 Multimeter Voltage & Continuity Check Study Guide',
+        lessonType: 'study_notes',
+        orderIndex: 2,
+        durationMinutes: 20,
+        isRequired: true,
+        prerequisiteLessonId: 'les_solar_1',
+        objectives: ['Read resting battery state of charge safely'],
+        textContent:
+          'A healthy resting 12V lead-acid battery reads 12.6V–12.7V. Below 11.9V indicates deep discharge; avoid running DC inverters below 11.5V to preserve battery lifespan in rural solar installations.',
+        transcript: 'Study notes summary: Resting voltage reference table (12.7V = 100%, 12.2V = 50%, 11.8V = recharge immediately).',
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-15T10:30:00Z',
+        updatedAt: '2026-10-15T10:30:00Z',
+      },
+      {
+        id: 'les_solar_3',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_2',
+        title: '2.1 Sizing Solar Panels for 4-Room Home Lighting',
+        lessonType: 'text',
+        orderIndex: 1,
+        durationMinutes: 25,
+        isRequired: true,
+        objectives: ['Compute daily Watt-hours for 4 LED bulbs and phone charging'],
+        textContent:
+          'Example Uganda household load: 4 x 5W LED bulbs running 5 hours/night = 100 Wh, plus phone charging 20 Wh = 120 Wh/day. Dividing by 4.5 average peak sun hours in Uganda and accounting for 25% system losses gives ~36W minimum panel; a 50W–80W panel provides rainy-season margin.',
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-16T10:00:00Z',
+        updatedAt: '2026-10-16T10:00:00Z',
+      },
+      {
+        id: 'les_dig_1',
+        courseId: 'course_digital_literacy',
+        moduleId: 'mod_dig_1',
+        title: '1.1 Digital Boundaries & Reporting Unsafe Contact',
+        lessonType: 'text',
+        orderIndex: 1,
+        durationMinutes: 15,
+        isRequired: true,
+        objectives: ['Identify unsafe online requests and use BCA Sauti 116 channels'],
+        textContent:
+          'Never share home addresses, school timetables, or private photos online with unverified strangers. On the BCA platform, minors never use 1:1 direct messages with mentors — all supervision stays transparent in group circles or live classes with Waiting Room enabled.',
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-20T10:00:00Z',
+        updatedAt: '2026-10-20T10:00:00Z',
+      },
+    ];
+    this.courseAssets = [
+      {
+        id: 'asset_solar_notes',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_1',
+        lessonId: 'les_solar_2',
+        fileName: 'Solar_Battery_Voltage_Chart_Ug_Edition.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 482000,
+        assetKind: 'pdf',
+        storagePath: 'lms/courses/course_solar_pv/modules/mod_solar_1/Solar_Battery_Voltage_Chart_Ug_Edition.pdf',
+        provider: 'firebase_storage',
+        visibility: 'private_enrolled',
+        uploadedBy: 'usr_instructor_musoke',
+        uploadedByName: 'Eng. Isaac Musoke',
+        createdAt: '2026-10-15T10:30:00Z',
+        updatedAt: '2026-10-15T10:30:00Z',
+      },
+    ];
+    this.instructorAssignments = [
+      {
+        id: 'course_solar_pv_usr_instructor_musoke',
+        courseId: 'course_solar_pv',
+        courseTitle: 'Solar PV & Off-Grid Electronics Fundamentals',
+        instructorUid: 'usr_instructor_musoke',
+        instructorName: 'Eng. Isaac Musoke',
+        roleType: 'lead_instructor',
+        assignedBy: 'usr_learning_manager_namono',
+        assignedByName: 'Florence Namono',
+        status: 'active',
+        createdAt: '2026-10-15T09:00:00Z',
+        updatedAt: '2026-10-15T09:00:00Z',
+      },
+    ];
+    this.courseEnrollments = [
+      {
+        id: 'course_solar_pv_usr_boy_active',
+        courseId: 'course_solar_pv',
+        courseTitle: 'Solar PV & Off-Grid Electronics Fundamentals',
+        userId: 'usr_boy_active',
+        learnerName: 'David Mukasa',
+        learnerDistrict: 'Kampala',
+        ageCategory: 'child_5_17',
+        isMinor: true,
+        guardianConsentVerified: true,
+        status: 'enrolled',
+        progressPercent: 67,
+        completedLessonsCount: 2,
+        totalLessonsCount: 3,
+        learningMinutes: 35,
+        enrolledAt: '2026-11-02T09:00:00Z',
+        createdAt: '2026-11-02T09:00:00Z',
+        updatedAt: '2026-11-10T11:00:00Z',
+      },
+      {
+        id: 'course_solar_pv_usr_young_adult',
+        courseId: 'course_solar_pv',
+        courseTitle: 'Solar PV & Off-Grid Electronics Fundamentals',
+        userId: 'usr_young_adult',
+        learnerName: 'Samuel Kiggundu',
+        learnerDistrict: 'Kampala',
+        ageCategory: 'young_adult_18_35',
+        isMinor: false,
+        guardianConsentVerified: true,
+        status: 'completed',
+        progressPercent: 100,
+        completedLessonsCount: 3,
+        totalLessonsCount: 3,
+        learningMinutes: 65,
+        enrolledAt: '2026-10-25T08:00:00Z',
+        completedAt: '2026-11-08T16:00:00Z',
+        createdAt: '2026-10-25T08:00:00Z',
+        updatedAt: '2026-11-08T16:00:00Z',
+      },
+      {
+        id: 'course_digital_literacy_usr_boy_active',
+        courseId: 'course_digital_literacy',
+        courseTitle: 'Digital Literacy, Spreadsheets & Safe Internet Citizenship',
+        userId: 'usr_boy_active',
+        learnerName: 'David Mukasa',
+        learnerDistrict: 'Kampala',
+        ageCategory: 'child_5_17',
+        isMinor: true,
+        guardianConsentVerified: true,
+        status: 'enrolled',
+        progressPercent: 0,
+        completedLessonsCount: 0,
+        totalLessonsCount: 1,
+        learningMinutes: 0,
+        enrolledAt: '2026-11-11T08:00:00Z',
+        createdAt: '2026-11-11T08:00:00Z',
+        updatedAt: '2026-11-11T08:00:00Z',
+      },
+      {
+        id: 'course_financial_stewardship_usr_young_adult',
+        courseId: 'course_financial_stewardship',
+        courseTitle: 'Young Adult Financial Stewardship & Agribusiness Accounting',
+        userId: 'usr_young_adult',
+        learnerName: 'Samuel Kiggundu',
+        learnerDistrict: 'Kampala',
+        ageCategory: 'young_adult_18_35',
+        isMinor: false,
+        guardianConsentVerified: true,
+        status: 'pending',
+        progressPercent: 0,
+        completedLessonsCount: 0,
+        totalLessonsCount: 0,
+        learningMinutes: 0,
+        enrolledAt: '2026-11-11T10:00:00Z',
+        createdAt: '2026-11-11T10:00:00Z',
+        updatedAt: '2026-11-11T10:00:00Z',
+      },
+    ];
+    this.lessonProgress = [
+      {
+        id: 'course_solar_pv_les_solar_1_usr_boy_active',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_1',
+        lessonId: 'les_solar_1',
+        userId: 'usr_boy_active',
+        completed: true,
+        lastPositionSeconds: 0,
+        watchedSeconds: 900,
+        playbackSpeed: 1,
+        updatedAt: '2026-11-04T15:00:00Z',
+      },
+      {
+        id: 'course_solar_pv_les_solar_2_usr_boy_active',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_1',
+        lessonId: 'les_solar_2',
+        userId: 'usr_boy_active',
+        completed: true,
+        lastPositionSeconds: 0,
+        watchedSeconds: 1200,
+        playbackSpeed: 1,
+        updatedAt: '2026-11-06T16:00:00Z',
+      },
+    ];
+    this.assessments = [
+      {
+        id: 'assm_solar_quiz1',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_1',
+        title: 'Module 1 Solar Safety & Polarity Check',
+        assessmentType: 'quiz',
+        instructions: 'Answer all questions carefully. Minimum pass mark is 70%.',
+        passMarkPercent: 70,
+        maxAttempts: 3,
+        releaseAnswersAfterSubmit: true,
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-16T08:00:00Z',
+        updatedAt: '2026-10-16T08:00:00Z',
+      },
+      {
+        id: 'assm_solar_project',
+        courseId: 'course_solar_pv',
+        moduleId: 'mod_solar_2',
+        title: 'Household Solar Wiring Bill of Materials Assignment',
+        assessmentType: 'written_assignment',
+        instructions: 'List the panel wattage, fuse rating, and cable gauge needed for a 4-room Ugandan home kit.',
+        passMarkPercent: 60,
+        maxAttempts: 2,
+        releaseAnswersAfterSubmit: false,
+        status: 'published',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-17T08:00:00Z',
+        updatedAt: '2026-10-17T08:00:00Z',
+      },
+    ];
+    this.assessmentQuestions = [
+      {
+        id: 'q_solar_1',
+        assessmentId: 'assm_solar_quiz1',
+        courseId: 'course_solar_pv',
+        orderIndex: 1,
+        questionType: 'mcq',
+        prompt: 'Which component should be connected FIRST to a 12V solar charge controller?',
+        options: ['The 150W Solar Panel', 'The 12V Battery Bank', 'The DC LED Light Bulbs', 'The AC Inverter'],
+        points: 5,
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-16T08:10:00Z',
+        updatedAt: '2026-10-16T08:10:00Z',
+      },
+      {
+        id: 'q_solar_2',
+        assessmentId: 'assm_solar_quiz1',
+        courseId: 'course_solar_pv',
+        orderIndex: 2,
+        questionType: 'true_false',
+        prompt: 'True or False: Reversing DC positive and negative leads can damage a solar charge controller.',
+        points: 5,
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-10-16T08:12:00Z',
+        updatedAt: '2026-10-16T08:12:00Z',
+      },
+    ];
+    this.assessmentAnswerKeys = [
+      {
+        questionId: 'q_solar_1',
+        assessmentId: 'assm_solar_quiz1',
+        courseId: 'course_solar_pv',
+        correctOptionIndex: 1,
+        explanation: 'Connecting the battery first lets the charge controller detect 12V/24V system voltage safely.',
+        updatedAt: '2026-10-16T08:10:00Z',
+      },
+      {
+        questionId: 'q_solar_2',
+        assessmentId: 'assm_solar_quiz1',
+        courseId: 'course_solar_pv',
+        correctBoolean: true,
+        explanation: 'Always confirm DC polarity with a multimeter before tightening terminals.',
+        updatedAt: '2026-10-16T08:12:00Z',
+      },
+    ];
+    this.assessmentAttempts = [
+      {
+        id: 'att_1',
+        assessmentId: 'assm_solar_quiz1',
+        courseId: 'course_solar_pv',
+        userId: 'usr_boy_active',
+        learnerName: 'David Mukasa',
+        attemptNumber: 1,
+        answers: { q_solar_1: 1, q_solar_2: true },
+        scorePercent: 100,
+        earnedPoints: 10,
+        totalPoints: 10,
+        passed: true,
+        status: 'graded',
+        gradedBy: 'Auto-Grader',
+        submittedAt: '2026-11-05T14:20:00Z',
+        gradedAt: '2026-11-05T14:20:00Z',
+      },
+    ];
+    this.assignmentSubmissions = [
+      {
+        id: 'sub_1',
+        assessmentId: 'assm_solar_project',
+        courseId: 'course_solar_pv',
+        userId: 'usr_boy_active',
+        learnerName: 'David Mukasa',
+        submissionText: 'For 4 LED 5W bulbs + 1 phone charger: 1 x 80W 12V solar panel, 10A PWM controller, 12V 50Ah AGM battery, and 15A inline fuse.',
+        status: 'submitted',
+        submittedAt: '2026-11-10T16:40:00Z',
+      },
+    ];
+    this.zoomConfig = {
+      connected: false,
+      secretsConfigured: false,
+      hostUserIdOrEmail: 'training@boychild.org',
+      defaultTimezone: 'Africa/Kampala',
+      minorSafeguardingLock: true,
+      statusMessage:
+        'Zoom Server-to-Server OAuth secrets (ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET) are not configured in Cloud Functions Secret Manager yet. Live sessions use verified manual links until configured.',
+      updatedAt: '2026-11-10T08:00:00Z',
+    };
+    this.courseSessions = [
+      {
+        id: 'csess_solar_live1',
+        courseId: 'course_solar_pv',
+        courseTitle: 'Solar PV & Off-Grid Electronics Fundamentals',
+        moduleId: 'mod_solar_2',
+        title: 'Live Wiring Clinic: Sizing Solar Inverters & Charge Controllers',
+        description: 'Interactive demonstration from Old Kampala Workshop with guarded Q&A.',
+        instructorUid: 'usr_instructor_musoke',
+        instructorName: 'Eng. Isaac Musoke',
+        scheduledDate: '2026-11-28',
+        startTimeKampala: '10:00',
+        startsAtIso: '2026-11-28T07:00:00.000Z',
+        durationMinutes: 60,
+        timezone: 'Africa/Kampala',
+        zoomMeetingDocId: 'zm_solar_1',
+        isRecurring: false,
+        status: 'scheduled',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-11-10T09:00:00Z',
+        updatedAt: '2026-11-10T09:00:00Z',
+      },
+    ];
+    this.zoomMeetings = [
+      {
+        id: 'zm_solar_1',
+        courseId: 'course_solar_pv',
+        sessionId: 'csess_solar_live1',
+        zoomMeetingId: 'MANUAL-8492019481',
+        topic: 'Live Wiring Clinic: Sizing Solar Inverters & Charge Controllers',
+        startTimeUtc: '2026-11-28T07:00:00.000Z',
+        durationMinutes: 60,
+        timezone: 'Africa/Kampala',
+        hostIdentity: 'Eng. Isaac Musoke',
+        status: 'scheduled',
+        waitingRoom: true,
+        joinBeforeHost: false,
+        recordingEnabled: false,
+        participantRestrictionsApplied: true,
+        passcodeProtected: true,
+        mode: 'manual_fallback',
+        createdBy: 'usr_instructor_musoke',
+        createdAt: '2026-11-10T09:00:00Z',
+        updatedAt: '2026-11-10T09:00:00Z',
+      },
+    ];
+    this.zoomMeetingSecrets = {
+      zm_solar_1: {
+        joinUrl: 'https://zoom.us/j/8492019481',
+        startUrl: 'https://zoom.us/s/8492019481',
+        passcode: 'BCA2026',
+      },
+    };
+    this.sessionAttendance = [
+      {
+        id: 'csess_solar_live1_usr_boy_active',
+        sessionId: 'csess_solar_live1',
+        courseId: 'course_solar_pv',
+        userId: 'usr_boy_active',
+        learnerName: 'David Mukasa',
+        status: 'present',
+        markedBy: 'usr_instructor_musoke',
+        markedByName: 'Eng. Isaac Musoke',
+        recordedAt: '2026-11-10T10:30:00Z',
+      },
+    ];
+    this.courseAnnouncements = [
+      {
+        id: 'cann_1',
+        courseId: 'course_solar_pv',
+        title: 'Saturday Live Solar Clinic at 10:00 AM Kampala Time',
+        message: 'Please review Module 1.2 voltage chart notes before joining Saturday’s live wiring walkthrough.',
+        priority: 'normal',
+        authorUid: 'usr_instructor_musoke',
+        authorName: 'Eng. Isaac Musoke',
+        createdAt: '2026-11-11T08:00:00Z',
+      },
+    ];
+    this.certificates = [
+      {
+        id: 'course_solar_pv_usr_young_adult',
+        certificateNumber: 'BCA-CERT-2026-4401',
+        courseId: 'course_solar_pv',
+        courseTitle: 'Solar PV & Off-Grid Electronics Fundamentals',
+        userId: 'usr_young_adult',
+        learnerDisplayName: 'Samuel Kiggundu',
+        completionDate: '2026-11-08',
+        instructorSignatory: 'Eng. Isaac Musoke',
+        learningManagerSignatory: 'Florence Namono',
+        qrToken: 'CERTQR-SOLAR4401',
+        status: 'issued',
+        issuedAt: '2026-11-08T16:05:00Z',
+        updatedAt: '2026-11-08T16:05:00Z',
+      },
+    ];
+    this.certificateVerifications = {
+      'BCA-CERT-2026-4401': {
+        certificateNumber: 'BCA-CERT-2026-4401',
+        courseTitle: 'Solar PV & Off-Grid Electronics Fundamentals',
+        learnerDisplayName: 'Samuel Kiggundu',
+        completionDate: '2026-11-08',
+        instructorSignatory: 'Eng. Isaac Musoke',
+        status: 'issued',
+        qrToken: 'CERTQR-SOLAR4401',
+        updatedAt: '2026-11-08T16:05:00Z',
+      },
+    };
+    this.learningNotifications = [
+      {
+        id: 'lnotif_1',
+        userId: 'usr_boy_active',
+        courseId: 'course_solar_pv',
+        sessionId: 'csess_solar_live1',
+        title: 'Upcoming Live Class (Kampala EAT)',
+        message: 'Live Wiring Clinic starts 2026-11-28 at 10:00 EAT. Waiting room is enabled.',
+        category: 'live_class_reminder',
+        reminderLeadTime: '24h',
+        read: false,
+        createdAt: '2026-11-11T09:00:00Z',
+      },
+    ];
     this.currentUserUid = 'usr_boy_active';
 
     // Privacy cleanup: scrub any legacy sensitive keys from localStorage
@@ -1815,11 +2504,20 @@ class MockStore {
     this.notifyListeners();
   }
 
-  assignUserRole(targetUid: string, newRole: UserRole, safeguardingCleared?: boolean) {
+  assignUserRole(
+    targetUid: string,
+    newRole: UserRole,
+    safeguardingCleared?: boolean,
+    instructorAuthorized?: boolean
+  ) {
     const u = this.users[targetUid];
     if (!u) return;
     u.role = newRole;
     u.safeguardingCleared = newRole === 'admin' ? true : Boolean(safeguardingCleared);
+    u.instructorAuthorized =
+      newRole === 'instructor' || newRole === 'learning_manager' || newRole === 'admin'
+        ? true
+        : Boolean(instructorAuthorized);
     u.updatedAt = new Date().toISOString();
     this.addAuditLog({
       action: 'USER_ROLE_ASSIGNED',
@@ -1827,7 +2525,7 @@ class MockStore {
       performedByRole: this.getCurrentUser().role,
       targetEntity: 'users',
       targetId: targetUid,
-      details: `Assigned role ${newRole}, safeguardingCleared=${u.safeguardingCleared}`,
+      details: `Assigned role ${newRole}, safeguardingCleared=${u.safeguardingCleared}, instructorAuthorized=${u.instructorAuthorized}`,
     });
     this.notifyListeners();
   }
@@ -2125,6 +2823,850 @@ class MockStore {
 
   markNotificationRead(notifId: string) {
     const n = this.notifications.find((item) => item.id === notifId);
+    if (n) {
+      n.read = true;
+      this.notifyListeners();
+    }
+  }
+
+  // ===================================================================
+  // BCA ONLINE SKILLING LMS METHODS (Stateful Offline + Live Store Sync)
+  // ===================================================================
+
+  canUserInstructCourse(uid: string, courseId: string): boolean {
+    const u = this.users[uid];
+    if (!u || u.status !== 'active') return false;
+    if (u.role === 'admin' || u.role === 'learning_manager') return true;
+    const isAuthorizedInstructor =
+      u.role === 'instructor' || (u.role === 'mentor' && u.instructorAuthorized === true);
+    if (!isAuthorizedInstructor) return false;
+    const c = this.courses.find((item) => item.id === courseId);
+    const hasAssign = this.instructorAssignments.some(
+      (a) => a.courseId === courseId && a.instructorUid === uid && a.status === 'active'
+    );
+    return hasAssign || Boolean(c && (c.createdBy === uid || c.instructorIds.includes(uid)));
+  }
+
+  upsertCourseDraft(
+    courseInput: Partial<Course> & { id?: string; title: string; category: string },
+    actorUid: string
+  ): Course {
+    const actor = this.users[actorUid];
+    const now = new Date().toISOString();
+    const existingIdx = courseInput.id ? this.courses.findIndex((c) => c.id === courseInput.id) : -1;
+    if (existingIdx >= 0) {
+      const existing = this.courses[existingIdx];
+      const next: Course = {
+        ...existing,
+        ...courseInput,
+        status: existing.status === 'published' && actor?.role === 'instructor' ? existing.status : (courseInput.status || existing.status),
+        updatedAt: now,
+      };
+      this.courses[existingIdx] = next;
+      this.notifyListeners();
+      return next;
+    }
+
+    const newCourse: Course = {
+      id: courseInput.id || `course_${Date.now()}`,
+      title: courseInput.title,
+      description: courseInput.description || '',
+      thumbnailUrl: courseInput.thumbnailUrl || '/images/programme_skills_1794461658653.jpg',
+      category: courseInput.category,
+      learningObjectives: courseInput.learningObjectives || ['Apply core skilling principles safely'],
+      targetAudience: courseInput.targetAudience || 'Boys & Young Men in Uganda',
+      ageEligibility: courseInput.ageEligibility || 'all_5_35',
+      level: courseInput.level || 'beginner',
+      durationHours: Number(courseInput.durationHours || 6),
+      prerequisites: courseInput.prerequisites || [],
+      instructorIds: courseInput.instructorIds || [actorUid],
+      instructorNames: courseInput.instructorNames || [actor?.fullName || 'BCA Instructor'],
+      learningFormat: courseInput.learningFormat || 'blended',
+      startDate: courseInput.startDate || now.slice(0, 10),
+      endDate: courseInput.endDate || '2027-06-30',
+      enrolmentCapacity: Number(courseInput.enrolmentCapacity || 50),
+      enrolledCount: 0,
+      status: courseInput.status || 'draft',
+      createdBy: actorUid,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.courses.unshift(newCourse);
+    this.addAuditLog({
+      action: 'COURSE_DRAFT_SAVED',
+      performedBy: actor?.fullName || 'Instructor',
+      performedByRole: actor?.role || 'instructor',
+      targetEntity: 'courses',
+      targetId: newCourse.id,
+      details: `Saved course "${newCourse.title}" (${newCourse.status})`,
+    });
+    this.notifyListeners();
+    return newCourse;
+  }
+
+  reviewCoursePublication(courseId: string, status: Course['status'], actorUid: string, approvalNotes?: string) {
+    const actor = this.users[actorUid];
+    if (!actor || (actor.role !== 'learning_manager' && actor.role !== 'admin')) {
+      throw new Error('Only a Learning Manager or Administrator may approve or publish courses.');
+    }
+    const course = this.courses.find((c) => c.id === courseId);
+    if (!course) throw new Error('Course not found.');
+    course.status = status;
+    course.approvedBy = actor.fullName;
+    if (approvalNotes) course.approvalNotes = approvalNotes;
+    course.updatedAt = new Date().toISOString();
+    this.learningNotifications.unshift({
+      id: `lnotif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      userId: course.createdBy,
+      courseId,
+      title: `Course ${status.replace('_', ' ')}`,
+      message: `Course "${course.title}" is now ${status}.${approvalNotes ? ` Notes: ${approvalNotes}` : ''}`,
+      category: 'announcement',
+      read: false,
+      createdAt: course.updatedAt,
+    });
+    this.addAuditLog({
+      action: `COURSE_${status.toUpperCase()}`,
+      performedBy: actor.fullName,
+      performedByRole: actor.role,
+      targetEntity: 'courses',
+      targetId: courseId,
+      details: `Course "${course.title}" set to ${status}`,
+    });
+    this.notifyListeners();
+  }
+
+  assignInstructorToCourse(
+    courseId: string,
+    instructorUid: string,
+    actorUid: string,
+    roleType: 'lead_instructor' | 'co_instructor' = 'lead_instructor',
+    authorizeMentor = false
+  ): InstructorAssignment {
+    const actor = this.users[actorUid];
+    if (!actor || (actor.role !== 'learning_manager' && actor.role !== 'admin')) {
+      throw new Error('Only Learning Managers or Admins may assign course instructors.');
+    }
+    const course = this.courses.find((c) => c.id === courseId);
+    const target = this.users[instructorUid];
+    if (!course || !target) throw new Error('Course or instructor user not found.');
+    if (target.role === 'mentor' && !target.instructorAuthorized && !authorizeMentor) {
+      throw new Error('Approved mentors require explicit instructor authorization before teaching LMS courses.');
+    }
+    if (target.role === 'mentor' && authorizeMentor) {
+      target.instructorAuthorized = true;
+      target.updatedAt = new Date().toISOString();
+    }
+    if (target.role !== 'instructor' && target.role !== 'learning_manager' && target.role !== 'admin' && !target.instructorAuthorized) {
+      throw new Error('User role is not authorized for instruction.');
+    }
+
+    const now = new Date().toISOString();
+    const assignment: InstructorAssignment = {
+      id: `${courseId}_${instructorUid}`,
+      courseId,
+      courseTitle: course.title,
+      instructorUid,
+      instructorName: target.fullName,
+      roleType,
+      assignedBy: actorUid,
+      assignedByName: actor.fullName,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.instructorAssignments = [assignment, ...this.instructorAssignments.filter((a) => a.id !== assignment.id)];
+    if (!course.instructorIds.includes(instructorUid)) course.instructorIds.push(instructorUid);
+    if (!course.instructorNames.includes(target.fullName)) course.instructorNames.push(target.fullName);
+    this.addAuditLog({
+      action: 'INSTRUCTOR_ASSIGNED',
+      performedBy: actor.fullName,
+      performedByRole: actor.role,
+      targetEntity: 'instructorAssignments',
+      targetId: assignment.id,
+      details: `Assigned ${target.fullName} (${roleType}) to ${course.title}`,
+    });
+    this.notifyListeners();
+    return assignment;
+  }
+
+  upsertCourseModule(input: Omit<CourseModule, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): CourseModule {
+    const now = new Date().toISOString();
+    const existingIdx = input.id ? this.courseModules.findIndex((m) => m.id === input.id) : -1;
+    if (existingIdx >= 0) {
+      const updated = { ...this.courseModules[existingIdx], ...input, updatedAt: now };
+      this.courseModules[existingIdx] = updated;
+      this.notifyListeners();
+      return updated;
+    }
+    const created: CourseModule = {
+      ...input,
+      id: input.id || `mod_${Date.now()}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.courseModules.push(created);
+    this.notifyListeners();
+    return created;
+  }
+
+  upsertCourseLesson(input: Omit<CourseLesson, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): CourseLesson {
+    const now = new Date().toISOString();
+    const existingIdx = input.id ? this.courseLessons.findIndex((l) => l.id === input.id) : -1;
+    if (existingIdx >= 0) {
+      const updated = { ...this.courseLessons[existingIdx], ...input, updatedAt: now };
+      this.courseLessons[existingIdx] = updated;
+      this.notifyListeners();
+      return updated;
+    }
+    const created: CourseLesson = {
+      ...input,
+      id: input.id || `les_${Date.now()}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.courseLessons.push(created);
+    this.notifyListeners();
+    return created;
+  }
+
+  addCourseAsset(asset: Omit<CourseAsset, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): CourseAsset {
+    const now = new Date().toISOString();
+    const created: CourseAsset = {
+      ...asset,
+      id: asset.id || `asset_${Date.now()}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.courseAssets.unshift(created);
+    if (created.visibility === 'course_thumbnail' && created.previewDataUrl) {
+      const c = this.courses.find((item) => item.id === created.courseId);
+      if (c) c.thumbnailUrl = created.previewDataUrl;
+    }
+    this.notifyListeners();
+    return created;
+  }
+
+  deleteCourseAsset(assetId: string) {
+    this.courseAssets = this.courseAssets.filter((a) => a.id !== assetId);
+    this.notifyListeners();
+  }
+
+  enrollInCourse(courseId: string, userId: string): CourseEnrollment {
+    const course = this.courses.find((c) => c.id === courseId);
+    const user = this.users[userId];
+    if (!course) throw new Error('Course not found.');
+    if (!user) throw new Error('User account not found.');
+    if (course.status !== 'published') throw new Error('Course is not published for enrolment.');
+
+    const isMinor = user.ageCategory === 'child_5_17' || (user.calculatedAge !== undefined && user.calculatedAge < 18);
+    if (isMinor && user.status !== 'active') {
+      throw new Error('Verified guardian consent is mandatory before a minor aged 5–17 can enrol in courses.');
+    }
+    if (course.ageEligibility === 'children_5_17' && !isMinor) {
+      throw new Error('This course is reserved for boys aged 5–17.');
+    }
+    if ((course.ageEligibility === 'young_adults_18_35' || course.ageEligibility === 'adults_18_plus') && isMinor) {
+      throw new Error('Age eligibility requires participants to be 18 or older.');
+    }
+
+    const existing = this.courseEnrollments.find((e) => e.courseId === courseId && e.userId === userId);
+    if (existing && ['enrolled', 'approved', 'completed', 'pending'].includes(existing.status)) {
+      return existing;
+    }
+    if (course.enrolledCount >= course.enrolmentCapacity) {
+      throw new Error('Course capacity is full.');
+    }
+
+    const now = new Date().toISOString();
+    const status: CourseEnrollment['status'] = course.learningFormat === 'self_paced' ? 'enrolled' : 'pending';
+    const totalLessons = this.courseLessons.filter((l) => l.courseId === courseId && l.status === 'published').length;
+    const enrollment: CourseEnrollment = {
+      id: `${courseId}_${userId}`,
+      courseId,
+      courseTitle: course.title,
+      userId,
+      learnerName: user.fullName,
+      learnerDistrict: user.district || 'Kampala',
+      ageCategory: user.ageCategory || 'young_adult_18_35',
+      isMinor,
+      guardianConsentVerified: isMinor ? user.status === 'active' : true,
+      status,
+      progressPercent: 0,
+      completedLessonsCount: 0,
+      totalLessonsCount: totalLessons,
+      learningMinutes: 0,
+      enrolledAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.courseEnrollments.unshift(enrollment);
+    if (status === 'enrolled') course.enrolledCount += 1;
+    this.learningNotifications.unshift({
+      id: `lnotif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      userId,
+      courseId,
+      title: status === 'enrolled' ? 'Course Enrolment Confirmed' : 'Enrolment Request Pending Approval',
+      message:
+        status === 'enrolled'
+          ? `You are enrolled in "${course.title}". Start learning anytime.`
+          : `Your enrolment request for "${course.title}" is pending Learning Manager review.`,
+      category: 'enrolment',
+      read: false,
+      createdAt: now,
+    });
+    this.notifyListeners();
+    return enrollment;
+  }
+
+  reviewCourseEnrollment(enrollmentId: string, decision: 'approved' | 'rejected', reason?: string) {
+    const enroll = this.courseEnrollments.find((e) => e.id === enrollmentId);
+    if (!enroll) throw new Error('Enrolment record not found.');
+    const wasPending = enroll.status === 'pending';
+    enroll.status = decision === 'approved' ? 'enrolled' : 'rejected';
+    if (reason) enroll.rejectionReason = reason;
+    enroll.updatedAt = new Date().toISOString();
+    if (decision === 'approved' && wasPending) {
+      const c = this.courses.find((item) => item.id === enroll.courseId);
+      if (c) c.enrolledCount += 1;
+    }
+    this.learningNotifications.unshift({
+      id: `lnotif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      userId: enroll.userId,
+      courseId: enroll.courseId,
+      title: decision === 'approved' ? 'Course Enrolment Approved' : 'Enrolment Declined',
+      message:
+        decision === 'approved'
+          ? `Your enrolment in "${enroll.courseTitle}" is approved.`
+          : `Your enrolment in "${enroll.courseTitle}" was declined.${reason ? ` Reason: ${reason}` : ''}`,
+      category: 'enrolment',
+      read: false,
+      createdAt: enroll.updatedAt,
+    });
+    this.notifyListeners();
+  }
+
+  recordLessonProgress(params: {
+    courseId: string;
+    moduleId: string;
+    lessonId: string;
+    userId: string;
+    completed?: boolean;
+    lastPositionSeconds?: number;
+    watchedSecondsDelta?: number;
+    playbackSpeed?: number;
+  }): LessonProgress {
+    const enroll = this.courseEnrollments.find((e) => e.courseId === params.courseId && e.userId === params.userId);
+    if (!enroll || !['enrolled', 'approved', 'completed'].includes(enroll.status)) {
+      throw new Error('Enrolment is required before tracking lesson progress.');
+    }
+    const id = `${params.courseId}_${params.lessonId}_${params.userId}`;
+    const existing = this.lessonProgress.find((p) => p.id === id);
+    const now = new Date().toISOString();
+    let rec: LessonProgress;
+    if (existing) {
+      if (params.completed !== undefined) existing.completed = params.completed;
+      if (params.lastPositionSeconds !== undefined) existing.lastPositionSeconds = params.lastPositionSeconds;
+      if (params.watchedSecondsDelta) existing.watchedSeconds += params.watchedSecondsDelta;
+      if (params.playbackSpeed !== undefined) existing.playbackSpeed = params.playbackSpeed;
+      existing.updatedAt = now;
+      rec = existing;
+    } else {
+      rec = {
+        id,
+        courseId: params.courseId,
+        moduleId: params.moduleId,
+        lessonId: params.lessonId,
+        userId: params.userId,
+        completed: Boolean(params.completed),
+        lastPositionSeconds: params.lastPositionSeconds || 0,
+        watchedSeconds: params.watchedSecondsDelta || 0,
+        playbackSpeed: params.playbackSpeed || 1,
+        updatedAt: now,
+      };
+      this.lessonProgress.push(rec);
+    }
+
+    this.recalculateEnrollmentAndCertificate(params.courseId, params.userId);
+    this.notifyListeners();
+    return rec;
+  }
+
+  recalculateEnrollmentAndCertificate(courseId: string, userId: string): number {
+    const enroll = this.courseEnrollments.find((e) => e.courseId === courseId && e.userId === userId);
+    if (!enroll) return 0;
+    const lessons = this.courseLessons.filter((l) => l.courseId === courseId && l.status === 'published' && l.isRequired !== false);
+    const total = lessons.length || this.courseLessons.filter((l) => l.courseId === courseId && l.status === 'published').length;
+    const completedIds = new Set(
+      this.lessonProgress.filter((p) => p.courseId === courseId && p.userId === userId && p.completed).map((p) => p.lessonId)
+    );
+    const completedCount = lessons.filter((l) => completedIds.has(l.id)).length;
+    const watchedMin = Math.round(
+      this.lessonProgress.filter((p) => p.courseId === courseId && p.userId === userId).reduce((s, p) => s + p.watchedSeconds, 0) / 60
+    );
+    enroll.completedLessonsCount = completedCount;
+    enroll.totalLessonsCount = total;
+    enroll.learningMinutes = Math.max(enroll.learningMinutes, watchedMin);
+    enroll.progressPercent = total === 0 ? 0 : Math.min(100, Math.round((completedCount / total) * 100));
+    if (enroll.progressPercent === 100) {
+      enroll.status = 'completed';
+      enroll.completedAt = enroll.completedAt || new Date().toISOString();
+      this.issueCertificate(courseId, userId, 'Automated Completion Engine');
+    }
+    return enroll.progressPercent;
+  }
+
+  upsertAssessment(input: Omit<Assessment, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Assessment {
+    const now = new Date().toISOString();
+    const created: Assessment = {
+      ...input,
+      id: input.id || `assm_${Date.now()}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const idx = this.assessments.findIndex((a) => a.id === created.id);
+    if (idx >= 0) this.assessments[idx] = { ...this.assessments[idx], ...created, updatedAt: now };
+    else this.assessments.push(created);
+    this.notifyListeners();
+    return created;
+  }
+
+  upsertAssessmentQuestion(params: {
+    assessmentId: string;
+    courseId: string;
+    orderIndex: number;
+    questionType: AssessmentQuestion['questionType'];
+    prompt: string;
+    options?: string[];
+    points: number;
+    correctOptionIndex?: number;
+    correctBoolean?: boolean;
+    expectedKeywords?: string[];
+    explanation?: string;
+    createdBy: string;
+  }): AssessmentQuestion {
+    const now = new Date().toISOString();
+    const q: AssessmentQuestion = {
+      id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      assessmentId: params.assessmentId,
+      courseId: params.courseId,
+      orderIndex: params.orderIndex,
+      questionType: params.questionType,
+      prompt: params.prompt,
+      options: params.options,
+      points: params.points,
+      createdBy: params.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.assessmentQuestions.push(q);
+    this.assessmentAnswerKeys.push({
+      questionId: q.id,
+      assessmentId: params.assessmentId,
+      courseId: params.courseId,
+      correctOptionIndex: params.correctOptionIndex,
+      correctBoolean: params.correctBoolean,
+      expectedKeywords: params.expectedKeywords,
+      explanation: params.explanation,
+      updatedAt: now,
+    });
+    this.notifyListeners();
+    return q;
+  }
+
+  submitAssessmentAttempt(
+    assessmentId: string,
+    courseId: string,
+    userId: string,
+    answers: Record<string, string | number | boolean>
+  ): AssessmentAttempt {
+    const enroll = this.courseEnrollments.find((e) => e.courseId === courseId && e.userId === userId);
+    if (!enroll || !['enrolled', 'approved', 'completed'].includes(enroll.status)) {
+      throw new Error('Enrolment in this course is required before taking assessments.');
+    }
+    const assessment = this.assessments.find((a) => a.id === assessmentId);
+    if (!assessment) throw new Error('Assessment not found.');
+    const prior = this.assessmentAttempts.filter((a) => a.assessmentId === assessmentId && a.userId === userId);
+    if (prior.length >= assessment.maxAttempts) {
+      throw new Error(`Maximum attempts (${assessment.maxAttempts}) reached.`);
+    }
+
+    const questions = this.assessmentQuestions.filter((q) => q.assessmentId === assessmentId);
+    let totalPoints = 0;
+    let earnedPoints = 0;
+    let hasManual = false;
+    for (const q of questions) {
+      totalPoints += q.points;
+      const key = this.assessmentAnswerKeys.find((k) => k.questionId === q.id);
+      const ans = answers[q.id];
+      if (q.questionType === 'mcq' && key && Number(ans) === Number(key.correctOptionIndex)) {
+        earnedPoints += q.points;
+      } else if (q.questionType === 'true_false' && key && Boolean(ans) === Boolean(key.correctBoolean)) {
+        earnedPoints += q.points;
+      } else if (q.questionType === 'short_answer' && key?.expectedKeywords && typeof ans === 'string') {
+        const lower = ans.toLowerCase();
+        if (key.expectedKeywords.some((kw) => lower.includes(kw.toLowerCase()))) earnedPoints += q.points;
+      } else if (q.questionType === 'written') {
+        hasManual = true;
+      }
+    }
+
+    const scorePercent = totalPoints === 0 ? 100 : Math.round((earnedPoints / totalPoints) * 100);
+    const passed = !hasManual && scorePercent >= assessment.passMarkPercent;
+    const now = new Date().toISOString();
+    const attempt: AssessmentAttempt = {
+      id: `att_${Date.now()}`,
+      assessmentId,
+      courseId,
+      userId,
+      learnerName: this.users[userId]?.fullName || 'Learner',
+      attemptNumber: prior.length + 1,
+      answers,
+      scorePercent,
+      earnedPoints,
+      totalPoints,
+      passed,
+      status: hasManual ? 'submitted' : 'graded',
+      gradedBy: hasManual ? undefined : 'Auto-Grader',
+      submittedAt: now,
+      gradedAt: hasManual ? undefined : now,
+    };
+    this.assessmentAttempts.unshift(attempt);
+    this.notifyListeners();
+    return attempt;
+  }
+
+  submitAssignmentWork(params: {
+    assessmentId: string;
+    courseId: string;
+    userId: string;
+    submissionText: string;
+    fileAssetPath?: string;
+    fileName?: string;
+  }): AssignmentSubmission {
+    const enroll = this.courseEnrollments.find((e) => e.courseId === params.courseId && e.userId === params.userId);
+    if (!enroll || !['enrolled', 'approved', 'completed'].includes(enroll.status)) {
+      throw new Error('Enrolment in this course is required to submit assignments.');
+    }
+    const sub: AssignmentSubmission = {
+      id: `sub_${Date.now()}`,
+      assessmentId: params.assessmentId,
+      courseId: params.courseId,
+      userId: params.userId,
+      learnerName: this.users[params.userId]?.fullName || 'Learner',
+      submissionText: params.submissionText,
+      fileAssetPath: params.fileAssetPath,
+      fileName: params.fileName,
+      status: 'submitted',
+      submittedAt: new Date().toISOString(),
+    };
+    this.assignmentSubmissions.unshift(sub);
+    this.notifyListeners();
+    return sub;
+  }
+
+  gradeAssignmentSubmission(submissionId: string, scorePercent: number, feedback: string, graderName: string, resubmit = false) {
+    const sub = this.assignmentSubmissions.find((s) => s.id === submissionId);
+    if (!sub) throw new Error('Submission not found.');
+    sub.status = resubmit ? 'resubmit_requested' : 'graded';
+    sub.scorePercent = scorePercent;
+    sub.instructorFeedback = feedback;
+    sub.gradedBy = graderName;
+    sub.gradedAt = new Date().toISOString();
+    this.learningNotifications.unshift({
+      id: `lnotif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      userId: sub.userId,
+      courseId: sub.courseId,
+      title: resubmit ? 'Assignment Resubmission Requested' : 'Assignment Graded',
+      message: `Score: ${scorePercent}%. Instructor feedback: ${feedback}`,
+      category: 'assessment',
+      read: false,
+      createdAt: sub.gradedAt,
+    });
+    this.notifyListeners();
+  }
+
+  updateZoomConfiguration(hostUserIdOrEmail: string, actorName: string): ZoomConfigStatus {
+    this.zoomConfig = {
+      ...this.zoomConfig,
+      hostUserIdOrEmail,
+      defaultTimezone: 'Africa/Kampala',
+      minorSafeguardingLock: true,
+      updatedBy: actorName,
+      updatedAt: new Date().toISOString(),
+    };
+    this.notifyListeners();
+    return this.zoomConfig;
+  }
+
+  testZoomConnectionOfflineHonest(): ZoomConfigStatus {
+    this.zoomConfig = {
+      ...this.zoomConfig,
+      connected: false,
+      secretsConfigured: false,
+      lastTestedAt: new Date().toISOString(),
+      statusMessage:
+        'Zoom Server-to-Server OAuth credentials are not configured in Cloud Functions Secret Manager yet. Set ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET to enable automated Zoom meeting creation.',
+      updatedAt: new Date().toISOString(),
+    };
+    this.notifyListeners();
+    return this.zoomConfig;
+  }
+
+  scheduleCourseSession(params: {
+    courseId: string;
+    title: string;
+    description: string;
+    instructorUid: string;
+    scheduledDate: string;
+    startTimeKampala: string;
+    durationMinutes: number;
+    isRecurring?: boolean;
+    manualJoinUrl?: string;
+    manualPasscode?: string;
+  }): CourseSession {
+    if (!this.zoomConfig.secretsConfigured && !params.manualJoinUrl) {
+      throw new Error(
+        'Zoom Server-to-Server OAuth credentials are not configured. Configure Zoom secrets in Learning Manager settings or supply a manual Zoom meeting URL fallback.'
+      );
+    }
+    const utcDate = new Date(`${params.scheduledDate}T${params.startTimeKampala}:00+03:00`);
+    if (Number.isNaN(utcDate.getTime())) {
+      throw new Error('Invalid date or Kampala time.');
+    }
+    const course = this.courses.find((c) => c.id === params.courseId);
+    const instructor = this.users[params.instructorUid];
+    const now = new Date().toISOString();
+    const sessionId = `csess_${Date.now()}`;
+    const meetingDocId = `zm_${Date.now()}`;
+    const session: CourseSession = {
+      id: sessionId,
+      courseId: params.courseId,
+      courseTitle: course?.title || 'BCA Course',
+      title: params.title,
+      description: params.description,
+      instructorUid: params.instructorUid,
+      instructorName: instructor?.fullName || 'BCA Instructor',
+      scheduledDate: params.scheduledDate,
+      startTimeKampala: params.startTimeKampala,
+      startsAtIso: utcDate.toISOString(),
+      durationMinutes: params.durationMinutes,
+      timezone: 'Africa/Kampala',
+      zoomMeetingDocId: meetingDocId,
+      manualJoinUrl: params.manualJoinUrl,
+      isRecurring: Boolean(params.isRecurring),
+      status: 'scheduled',
+      createdBy: params.instructorUid,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const meeting: ZoomMeetingRecord = {
+      id: meetingDocId,
+      courseId: params.courseId,
+      sessionId,
+      zoomMeetingId: this.zoomConfig.secretsConfigured ? String(Date.now()) : `MANUAL-${Date.now()}`,
+      topic: params.title,
+      startTimeUtc: utcDate.toISOString(),
+      durationMinutes: params.durationMinutes,
+      timezone: 'Africa/Kampala',
+      hostIdentity: instructor?.fullName || 'BCA Instructor',
+      status: 'scheduled',
+      waitingRoom: true,
+      joinBeforeHost: false,
+      recordingEnabled: false,
+      participantRestrictionsApplied: true,
+      passcodeProtected: Boolean(params.manualPasscode),
+      mode: this.zoomConfig.secretsConfigured ? 'zoom_api' : 'manual_fallback',
+      createdBy: params.instructorUid,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.courseSessions.unshift(session);
+    this.zoomMeetings.unshift(meeting);
+    this.zoomMeetingSecrets[meetingDocId] = {
+      joinUrl: params.manualJoinUrl || 'https://zoom.us/j/unconfigured',
+      startUrl: params.manualJoinUrl || 'https://zoom.us/s/unconfigured',
+      passcode: params.manualPasscode || '',
+    };
+    this.notifyListeners();
+    return session;
+  }
+
+  getAuthorizedMeetingAccess(sessionId: string, callerUid: string): AuthorizedMeetingAccess {
+    const session = this.courseSessions.find((s) => s.id === sessionId);
+    if (!session) throw new Error('Live class session not found.');
+    if (session.status === 'cancelled') throw new Error('This live class session has been cancelled.');
+
+    const caller = this.users[callerUid];
+    if (!caller) throw new Error('Sign in required to access live meetings.');
+    const isHostOrManager =
+      caller.role === 'admin' ||
+      caller.role === 'learning_manager' ||
+      this.canUserInstructCourse(callerUid, session.courseId);
+    const isEnrolled = this.courseEnrollments.some(
+      (e) => e.courseId === session.courseId && e.userId === callerUid && ['enrolled', 'approved', 'completed'].includes(e.status)
+    );
+    if (!isHostOrManager && !isEnrolled) {
+      throw new Error('Only enrolled learners or assigned instructors can join this live class.');
+    }
+    const meeting = this.zoomMeetings.find((m) => m.id === session.zoomMeetingDocId);
+    const secret = session.zoomMeetingDocId ? this.zoomMeetingSecrets[session.zoomMeetingDocId] : undefined;
+    if (!meeting || !secret) throw new Error('Meeting link has not been configured yet.');
+
+    return {
+      sessionId: session.id,
+      zoomMeetingId: meeting.zoomMeetingId,
+      topic: session.title,
+      startsAtIso: session.startsAtIso,
+      durationMinutes: session.durationMinutes,
+      timezone: 'Africa/Kampala',
+      joinUrl: secret.joinUrl,
+      passcode: secret.passcode,
+      ...(isHostOrManager ? { startUrl: secret.startUrl } : {}),
+      safeguardingNotice: 'Waiting Room is enabled and recording is disabled by default for minor safeguarding.',
+    };
+  }
+
+  cancelCourseSession(sessionId: string) {
+    const s = this.courseSessions.find((item) => item.id === sessionId);
+    if (s) {
+      s.status = 'cancelled';
+      s.updatedAt = new Date().toISOString();
+      const m = this.zoomMeetings.find((item) => item.id === s.zoomMeetingDocId);
+      if (m) m.status = 'cancelled';
+      this.notifyListeners();
+    }
+  }
+
+  recordSessionAttendance(params: {
+    sessionId: string;
+    courseId: string;
+    userId: string;
+    learnerName: string;
+    status: SessionAttendance['status'];
+    markedBy: string;
+    markedByName: string;
+  }) {
+    const id = `${params.sessionId}_${params.userId}`;
+    const existing = this.sessionAttendance.find((a) => a.id === id);
+    const now = new Date().toISOString();
+    if (existing) {
+      existing.status = params.status;
+      existing.markedBy = params.markedBy;
+      existing.markedByName = params.markedByName;
+      existing.recordedAt = now;
+    } else {
+      this.sessionAttendance.unshift({ ...params, id, recordedAt: now });
+    }
+    this.notifyListeners();
+  }
+
+  addCourseAnnouncement(ann: Omit<CourseAnnouncement, 'id' | 'createdAt'>): CourseAnnouncement {
+    const created: CourseAnnouncement = {
+      ...ann,
+      id: `cann_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+    this.courseAnnouncements.unshift(created);
+    this.notifyListeners();
+    return created;
+  }
+
+  issueCertificate(courseId: string, userId: string, signatoryManager = 'Florence Namono'): CourseCertificate {
+    const existing = this.certificates.find((c) => c.courseId === courseId && c.userId === userId);
+    if (existing) return existing;
+    const course = this.courses.find((c) => c.id === courseId);
+    const user = this.users[userId];
+    if (!course || !user) throw new Error('Course or learner not found.');
+    const isMinor = user.ageCategory === 'child_5_17' || (user.calculatedAge !== undefined && user.calculatedAge < 18);
+    const parts = user.fullName.split(' ').filter(Boolean);
+    const displayName = isMinor
+      ? parts.length > 1
+        ? `${parts[0]} ${parts[parts.length - 1][0]}.`
+        : `${parts[0]?.[0] || 'B'}.`
+      : user.fullName;
+
+    const certNumber = `BCA-CERT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const qrToken = `CERTQR-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+    const completionDate = new Date().toISOString().slice(0, 10);
+    const now = new Date().toISOString();
+    const cert: CourseCertificate = {
+      id: `${courseId}_${userId}`,
+      certificateNumber: certNumber,
+      courseId,
+      courseTitle: course.title,
+      userId,
+      learnerDisplayName: displayName,
+      completionDate,
+      instructorSignatory: course.instructorNames[0] || 'BCA Lead Instructor',
+      learningManagerSignatory: signatoryManager,
+      qrToken,
+      status: 'issued',
+      issuedAt: now,
+      updatedAt: now,
+    };
+    this.certificates.unshift(cert);
+    this.certificateVerifications[certNumber] = {
+      certificateNumber: certNumber,
+      courseTitle: course.title,
+      learnerDisplayName: displayName,
+      completionDate,
+      instructorSignatory: cert.instructorSignatory,
+      status: 'issued',
+      qrToken,
+      updatedAt: now,
+    };
+    this.learningNotifications.unshift({
+      id: `lnotif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      userId,
+      courseId,
+      title: 'Digital Certificate Issued',
+      message: `Certificate ${certNumber} for "${course.title}" is now available.`,
+      category: 'certificate',
+      read: false,
+      createdAt: now,
+    });
+    this.notifyListeners();
+    return cert;
+  }
+
+  revokeCertificate(certificateId: string, reason: string, actorName: string) {
+    const cert = this.certificates.find((c) => c.id === certificateId);
+    if (!cert) throw new Error('Certificate not found.');
+    const now = new Date().toISOString();
+    cert.status = 'revoked';
+    cert.revokedReason = reason;
+    cert.revokedBy = actorName;
+    cert.updatedAt = now;
+    if (this.certificateVerifications[cert.certificateNumber]) {
+      this.certificateVerifications[cert.certificateNumber].status = 'revoked';
+      this.certificateVerifications[cert.certificateNumber].revokedAt = now;
+      this.certificateVerifications[cert.certificateNumber].updatedAt = now;
+    }
+    this.addAuditLog({
+      action: 'LMS_CERTIFICATE_REVOKED',
+      performedBy: actorName,
+      performedByRole: 'learning_manager',
+      targetEntity: 'certificates',
+      targetId: cert.certificateNumber,
+      details: reason,
+    });
+    this.notifyListeners();
+  }
+
+  verifyCertificate(certNumberOrToken: string): CertificateVerificationRecord | null {
+    const clean = certNumberOrToken.trim().toUpperCase();
+    if (!clean) return null;
+    if (this.certificateVerifications[clean]) return this.certificateVerifications[clean];
+    return (
+      Object.values(this.certificateVerifications).find(
+        (v) => v.certificateNumber.toUpperCase() === clean || v.qrToken.toUpperCase() === clean
+      ) || null
+    );
+  }
+
+  markLearningNotificationRead(notifId: string) {
+    const n = this.learningNotifications.find((item) => item.id === notifId);
     if (n) {
       n.read = true;
       this.notifyListeners();

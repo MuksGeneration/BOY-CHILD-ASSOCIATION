@@ -702,6 +702,7 @@ export const AdminConsolePage: React.FC = () => {
                       <th className="py-2.5 px-4">Current Status</th>
                       <th className="py-2.5 px-4">Role Assignment</th>
                       <th className="py-2.5 px-4">Safeguarding Cleared</th>
+                      <th className="py-2.5 px-4">LMS Instructor Auth</th>
                       <th className="py-2.5 pl-4 text-right">Account State</th>
                     </tr>
                   </thead>
@@ -721,8 +722,12 @@ export const AdminConsolePage: React.FC = () => {
                             value={u.role}
                             onChange={(e) => {
                               const nextRole = e.target.value as UserRole;
+                              const nextInstructorAuth =
+                                nextRole === 'instructor' || nextRole === 'learning_manager' || nextRole === 'admin'
+                                  ? true
+                                  : u.instructorAuthorized;
                               runAction(
-                                () => firebaseService.assignUserRole(u.uid, nextRole, u.safeguardingCleared),
+                                () => firebaseService.assignUserRole(u.uid, nextRole, u.safeguardingCleared, nextInstructorAuth),
                                 `Updated role for ${u.fullName} to ${nextRole}.`
                               );
                             }}
@@ -731,6 +736,8 @@ export const AdminConsolePage: React.FC = () => {
                             <option value="boy">boy</option>
                             <option value="guardian">guardian</option>
                             <option value="mentor">mentor</option>
+                            <option value="instructor">instructor</option>
+                            <option value="learning_manager">learning_manager</option>
                             <option value="partner">partner</option>
                             <option value="coordinator">coordinator</option>
                             <option value="admin">admin</option>
@@ -740,7 +747,7 @@ export const AdminConsolePage: React.FC = () => {
                           <button
                             onClick={() =>
                               runAction(
-                                () => firebaseService.assignUserRole(u.uid, u.role, !u.safeguardingCleared),
+                                () => firebaseService.assignUserRole(u.uid, u.role, !u.safeguardingCleared, u.instructorAuthorized),
                                 `Updated safeguarding clearance for ${u.fullName}.`
                               )
                             }
@@ -751,6 +758,37 @@ export const AdminConsolePage: React.FC = () => {
                             }`}
                           >
                             {u.safeguardingCleared || u.role === 'admin' ? 'Cleared' : 'Standard'}
+                          </button>
+                        </td>
+                        <td className="py-3 px-4">
+                          <button
+                            onClick={() =>
+                              runAction(
+                                () =>
+                                  firebaseService.assignUserRole(
+                                    u.uid,
+                                    u.role,
+                                    u.safeguardingCleared,
+                                    !u.instructorAuthorized
+                                  ),
+                                `Updated LMS Instructor authorization for ${u.fullName}.`
+                              )
+                            }
+                            className={`px-2.5 py-1 rounded-lg font-semibold ${
+                              u.instructorAuthorized ||
+                              u.role === 'instructor' ||
+                              u.role === 'learning_manager' ||
+                              u.role === 'admin'
+                                ? 'bg-teal-50 text-teal-800 border border-teal-200'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {u.instructorAuthorized ||
+                            u.role === 'instructor' ||
+                            u.role === 'learning_manager' ||
+                            u.role === 'admin'
+                              ? 'Authorized'
+                              : 'Not Authorized'}
                           </button>
                         </td>
                         <td className="py-3 pl-4 text-right">

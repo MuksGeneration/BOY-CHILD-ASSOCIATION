@@ -63,3 +63,20 @@ export function useSafeguardingData(hasClearance: boolean): number {
   }, [hasClearance]);
   return tick;
 }
+
+export function useLmsData(uid?: string, role?: UserRole, instructorAuthorized?: boolean): number {
+  const tick = useStoreTick();
+  useEffect(() => {
+    return firebaseService.subscribeLmsData(uid, role, instructorAuthorized);
+  }, [uid, role, instructorAuthorized]);
+  return tick;
+}
+
+export function useCourseWorkspaceData(courseId?: string, uid?: string, role?: UserRole): number {
+  const tick = useStoreTick();
+  useEffect(() => {
+    if (!courseId) return;
+    return firebaseService.subscribeCourseWorkspace(courseId, uid, role);
+  }, [courseId, uid, role]);
+  return tick;
+}

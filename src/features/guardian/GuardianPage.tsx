@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { useMemberData, usePublicCatalog } from '../../hooks/usePlatformData';
+import { useLmsData, useMemberData, usePublicCatalog } from '../../hooks/usePlatformData';
 import { firebaseService } from '../../lib/firebase/firebase';
 import { requestGuardianLinkSchema, submitGuardianConsentSchema } from '../../lib/validation/schemas';
 import { AppUser, GuardianVerificationMethod } from '../../types';
@@ -15,6 +16,9 @@ import {
   AlertTriangle,
   Bell,
   FileWarning,
+  GraduationCap,
+  Award,
+  Video,
 } from 'lucide-react';
 
 const VERIFICATION_METHOD_LABELS: Record<GuardianVerificationMethod, string> = {
@@ -28,6 +32,7 @@ export const GuardianPage: React.FC = () => {
   const { user, role } = useAuth();
   usePublicCatalog(role);
   const tick = useMemberData(user?.uid, role);
+  const lmsTick = useLmsData(user?.uid, role, user?.instructorAuthorized);
 
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -56,6 +61,9 @@ export const GuardianPage: React.FC = () => {
   const consentHistory = firebaseService.getConsentRecords().filter((c) => c.guardianId === user?.uid);
   const notifications = firebaseService.getNotifications(user?.uid || '');
   const circles = firebaseService.getCircles();
+  const courses = firebaseService.getCourses();
+  const allSessions = firebaseService.getCourseSessions();
+  void lmsTick;
 
   useEffect(() => {
     let cancelled = false;
@@ -228,6 +236,12 @@ export const GuardianPage: React.FC = () => {
             {linkedBoys.map((boy) => {
               const boyCircle = circles.find((c) => c.id === boy.circleId);
               const boyAttendance = firebaseService.getAttendance({ memberId: boy.uid });
+              const boyEnrollments = firebaseService.getEnrollments({ userId: boy.uid });
+              const boyCertificates = firebaseService.getCertificates(boy.uid).filter((c) => c.status === 'issued');
+              const enrolledCourseIds = new Set(boyEnrollments.map((en) => en.courseId));
+              const boyUpcomingClasses = allSessions
+                .filter((s) => enrolledCourseIds.has(s.courseId) && s.status !== 'cancelled' && s.status !== 'completed')
+                .slice(0, 2);
               const isPending = boy.status === 'pending_guardian_consent';
 
               return (
@@ -262,7 +276,7 @@ export const GuardianPage: React.FC = () => {
                             <span>Guardian Consent Required</span>
                           </div>
                           <p>
-                            {boy.fullName.split(' ')[0]} cannot access circles or Q&amp;A threads until you submit consent below.
+                            {boy.fullName.split(' ')[0]} cannot access circles, online skilling courses, or Q&amp;A threads until you submit consent below.
                           </p>
                         </div>
                       ) : (
@@ -294,6 +308,74 @@ export const GuardianPage: React.FC = () => {
                                 <span className="font-bold uppercase text-emerald-700">{att.status}</span>
                               </div>
                             ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Online Skilling Progress & Safeguarding Oversight */}
+                      <div className="pt-2 border-t border-slate-100 space-y-2">
+                        <div className="font-semibold text-slate-700 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <GraduationCap className="w-3.5 h-3.5 text-[#005A9C]" />
+                            <span>Online Skilling Progress ({boyEnrollments.length})</span>
+                          </span>
+                          <Link to="/learn" className="text-[11px] font-bold text-[#005A9C] hover:underline">
+                            View Academy &rarr;
+                          </Link>
+                        </div>
+                        {boyEnrollments.length === 0 ? (
+                          <p className="text-[11px] text-slate-400">Not enrolled in any online skilling courses yet.</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {boyEnrollments.slice(0, 3).map((enr) => {
+                              const courseTitle = courses.find((c) => c.id === enr.courseId)?.title || enr.courseTitle;
+                              return (
+                                <div key={enr.id} className="bg-slate-50 px-2.5 py-1.5 rounded-lg space-y-1">
+                                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                                    <span className="font-semibold text-[#1B365D] truncate">{courseTitle}</span>
+                                    <span className="font-mono font-bold text-[#005A9C] shrink-0">{enr.progressPercent}%</span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-[#005A9C]"
+                                      style={{ width: `${Math.min(100, Math.max(0, enr.progressPercent))}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {boyUpcomingClasses.length > 0 && (
+                          <div className="space-y-1 pt-1">
+                            <div className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
+                              <Video className="w-3 h-3 text-[#005A9C]" />
+                              <span>Upcoming Live Classes (Africa/Kampala)</span>
+                            </div>
+                            {boyUpcomingClasses.map((sess) => (
+                              <div key={sess.id} className="text-[11px] text-slate-600 bg-blue-50/60 px-2.5 py-1 rounded flex justify-between gap-2">
+                                <span className="truncate font-medium text-[#1B365D]">{sess.title}</span>
+                                <span className="font-mono text-[10px] shrink-0">
+                                  {new Date(sess.startsAtIso).toLocaleDateString('en-UG', { timeZone: 'Africa/Kampala', month: 'short', day: 'numeric' })}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {boyCertificates.length > 0 && (
+                          <div className="flex items-center justify-between text-[11px] bg-emerald-50 text-emerald-900 px-2.5 py-1.5 rounded-lg">
+                            <span className="flex items-center gap-1.5 font-semibold">
+                              <Award className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>{boyCertificates.length} Course Certificate(s) Earned</span>
+                            </span>
+                            <Link
+                              to={`/verify-certificate/${boyCertificates[0].certificateNumber}`}
+                              className="font-mono font-bold underline"
+                            >
+                              {boyCertificates[0].certificateNumber}
+                            </Link>
                           </div>
                         )}
                       </div>
