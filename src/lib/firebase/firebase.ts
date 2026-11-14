@@ -1,8 +1,19 @@
-import { isFirebaseConfigured, auth, db, functions, googleProvider, testFirestoreConnection } from './config';
+import {
+  isFirebaseConfigured,
+  auth,
+  db,
+  functions,
+  googleProvider,
+  testFirestoreConnection,
+  ensureFirestoreNetworkEnabled,
+} from './config';
+import { runFirestoreConnectivityDiagnostic, withFirestoreRetry } from './diagnostics';
 import { handleFirestoreError, OperationType } from './errors';
 import { mockStore } from './mockStore';
 import {
   AppUser,
+  MemberProfile,
+  MemberDirectoryEntry,
   AttachmentMeta,
   ConcernReport,
   SafeguardingCase,
@@ -66,6 +77,7 @@ import {
   signInWithPhoneNumber,
   RecaptchaVerifier,
   ConfirmationResult,
+  User as FirebaseUser,
 } from 'firebase/auth';
 import {
   arrayUnion,
@@ -87,9 +99,8 @@ import {
 import { httpsCallable } from 'firebase/functions';
 
 export const isDemoModeEnabled =
-  !isFirebaseConfigured ||
   import.meta.env.MODE === 'test' ||
-  import.meta.env.VITE_USE_DEMO_STORE === 'true';
+  (!import.meta.env.PROD && (!isFirebaseConfigured || import.meta.env.VITE_USE_DEMO_STORE === 'true'));
 
 function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
@@ -134,30 +145,173 @@ async function tryCallable<TReq, TRes>(name: string, payload: TReq): Promise<TRe
   }
 }
 
+const inFlightProfileLoads = new Map<string, Promise<AppUser>>();
+
 export const firebaseService = {
   testConnection: testFirestoreConnection,
+  diagnoseConnectivity: runFirestoreConnectivityDiagnostic,
 
   // ------------------------------------------------------------------
   // Authentication & Verification
   // ------------------------------------------------------------------
-  async signIn(email: string, password: string): Promise<AppUser> {
-    if (isFirebaseConfigured && auth && db) {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      try {
-        const userDoc = await getDoc(doc(db, 'users', cred.user.uid));
-        if (userDoc.exists()) {
-          const data = normalizeDoc<AppUser>(userDoc.id, userDoc.data());
-          if (data.status === 'suspended') {
-            await fbSignOut(auth);
-            throw new Error('This account has been suspended by an administrator.');
-          }
-          return { ...data, uid: cred.user.uid, emailVerified: cred.user.emailVerified };
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message.includes('suspended')) throw err;
-        handleFirestoreError(err, OperationType.GET, `users/${cred.user.uid}`);
+  async loadOrEnsureUserProfile(fbUser: FirebaseUser): Promise<AppUser> {
+    const existingPromise = inFlightProfileLoads.get(fbUser.uid);
+    if (existingPromise) {
+      return existingPromise;
+    }
+
+    const loadPromise = this._executeLoadOrEnsureUserProfile(fbUser).finally(() => {
+      inFlightProfileLoads.delete(fbUser.uid);
+    });
+    inFlightProfileLoads.set(fbUser.uid, loadPromise);
+    return loadPromise;
+  },
+
+  async _executeLoadOrEnsureUserProfile(fbUser: FirebaseUser): Promise<AppUser> {
+    if (!isFirebaseConfigured || !db || !auth) {
+      throw Object.assign(new Error('Firebase is not properly configured for this environment.'), {
+        code: 'invalid-argument',
+      });
+    }
+
+    const tokenResult = await fbUser.getIdTokenResult().catch(() => null);
+    if (tokenResult?.claims?.suspended === true) {
+      await fbSignOut(auth).catch(() => undefined);
+      throw new Error('This account has been suspended by an administrator.');
+    }
+
+    const claimRole = tokenResult?.claims?.role as UserRole | undefined;
+    const claimCleared = Boolean(tokenResult?.claims?.safeguardingCleared);
+    const claimInstructorAuthorized = Boolean(tokenResult?.claims?.instructorAuthorized);
+    const isBootstrapAdmin =
+      (fbUser.email || '').toLowerCase() === 'mukuladavid6@gmail.com' && fbUser.emailVerified;
+
+    const userDocRef = doc(db, 'users', fbUser.uid);
+    const userDoc = await withFirestoreRetry(async () => {
+      await ensureFirestoreNetworkEnabled();
+      return getDoc(userDocRef);
+    });
+
+    if (userDoc.exists()) {
+      const data = normalizeDoc<AppUser>(userDoc.id, userDoc.data());
+      if (data.status === 'suspended') {
+        await fbSignOut(auth).catch(() => undefined);
+        throw new Error('This account has been suspended by an administrator.');
       }
-      throw new Error('User profile record not found.');
+      const resolvedRole: UserRole = isBootstrapAdmin ? 'admin' : claimRole || data.role || 'boy';
+      return {
+        ...data,
+        uid: fbUser.uid,
+        role: resolvedRole,
+        safeguardingCleared: resolvedRole === 'admin' || claimCleared || Boolean(data.safeguardingCleared),
+        instructorAuthorized:
+          resolvedRole === 'admin' ||
+          resolvedRole === 'instructor' ||
+          resolvedRole === 'learning_manager' ||
+          claimInstructorAuthorized ||
+          Boolean(data.instructorAuthorized),
+        emailVerified: fbUser.emailVerified,
+      };
+    }
+
+    // Profile missing in Firestore: invoke secure backend ensureUserProfile function first
+    const cloudProfileRes = await tryCallable<Record<string, never>, { created: boolean; profile: AppUser }>(
+      'ensureUserProfile',
+      {}
+    );
+    if (cloudProfileRes?.profile) {
+      const normalized = normalizeValue(cloudProfileRes.profile) as AppUser;
+      if (normalized.status === 'suspended') {
+        await fbSignOut(auth).catch(() => undefined);
+        throw new Error('This account has been suspended by an administrator.');
+      }
+      return {
+        ...normalized,
+        uid: fbUser.uid,
+        emailVerified: fbUser.emailVerified,
+      };
+    }
+
+    // Fallback when Cloud Functions aren't deployed in preview:
+    // Strictly least-privileged initialization matching firestore.rules allow create.
+    // Never elevate privileges from client input.
+    const email = (fbUser.email || '').trim();
+    if (!isBootstrapAdmin && email.length < 3) {
+      throw Object.assign(
+        new Error('Profile initialization for phone-only accounts requires backend Cloud Functions.'),
+        { code: 'failed-precondition' }
+      );
+    }
+
+    const validClaimRoles: UserRole[] = [
+      'boy',
+      'guardian',
+      'mentor',
+      'partner',
+      'coordinator',
+      'instructor',
+      'learning_manager',
+      'admin',
+    ];
+    const resolvedInitialRole: UserRole = isBootstrapAdmin
+      ? 'admin'
+      : claimRole && validClaimRoles.includes(claimRole)
+      ? claimRole
+      : 'boy';
+
+    const initialStatus: AppUser['status'] =
+      resolvedInitialRole === 'admin' ? 'active' : 'pending_guardian_consent';
+
+    const safeName = (fbUser.displayName || email.split('@')[0] || 'BCA Member').trim().slice(0, 80);
+    const initializedProfile: AppUser = {
+      uid: fbUser.uid,
+      email,
+      fullName: safeName.length >= 2 ? safeName : 'BCA Member',
+      role: resolvedInitialRole,
+      status: initialStatus,
+      ageCategory: resolvedInitialRole === 'boy' ? 'child_5_17' : 'adult',
+      safeguardingCleared: resolvedInitialRole === 'admin' || claimCleared,
+      instructorAuthorized:
+        resolvedInitialRole === 'admin' ||
+        resolvedInitialRole === 'instructor' ||
+        resolvedInitialRole === 'learning_manager' ||
+        claimInstructorAuthorized,
+      emailVerified: fbUser.emailVerified,
+      district: 'Kampala',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: fbUser.uid,
+    };
+
+    const payload: Record<string, unknown> = {
+      uid: initializedProfile.uid,
+      email: initializedProfile.email,
+      fullName: initializedProfile.fullName,
+      role: initializedProfile.role,
+      status: initializedProfile.status,
+      ageCategory: initializedProfile.ageCategory,
+      emailVerified: initializedProfile.emailVerified,
+      district: initializedProfile.district,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: fbUser.uid,
+    };
+    if (isBootstrapAdmin) {
+      payload.safeguardingCleared = true;
+      payload.instructorAuthorized = true;
+    }
+
+    await withFirestoreRetry(() => setDoc(userDocRef, payload));
+    return initializedProfile;
+  },
+
+  async signIn(email: string, password: string): Promise<AppUser> {
+    if (!isDemoModeEnabled) {
+      if (!isFirebaseConfigured || !auth || !db) {
+        throw Object.assign(new Error('Firebase configuration is incomplete.'), { code: 'invalid-argument' });
+      }
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      return this.loadOrEnsureUserProfile(cred.user);
     }
 
     const found = Object.values(mockStore.users).find((u) => u.email.toLowerCase() === email.toLowerCase());
@@ -168,55 +322,29 @@ export const firebaseService = {
       mockStore.switchUser(found.uid);
       return found;
     }
-    return mockStore.getCurrentUser();
+    throw new Error('Demo account not found matching that email address.');
   },
 
   async signInWithGoogle(): Promise<AppUser> {
-    if (isFirebaseConfigured && auth && db) {
-      const cred = await signInWithPopup(auth, googleProvider);
-      const userDocRef = doc(db, 'users', cred.user.uid);
-      try {
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          const data = normalizeDoc<AppUser>(userDoc.id, userDoc.data());
-          if (data.status === 'suspended') {
-            await fbSignOut(auth);
-            throw new Error('This account is currently suspended.');
-          }
-          return { ...data, uid: cred.user.uid, emailVerified: cred.user.emailVerified };
-        }
-        const newUser: AppUser = {
-          uid: cred.user.uid,
-          email: cred.user.email || '',
-          fullName: cred.user.displayName || 'Boy Child Member',
-          role: 'boy',
-          status: 'active',
-          ageCategory: 'young_adult_18_35',
-          emailVerified: cred.user.emailVerified,
-          district: 'Kampala',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          createdBy: cred.user.uid,
-        };
-        await setDoc(userDocRef, {
-          ...stripUndefined(newUser as unknown as Record<string, unknown>),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        return newUser;
-      } catch (err) {
-        if (err instanceof Error && err.message.includes('suspended')) throw err;
-        handleFirestoreError(err, OperationType.WRITE, `users/${cred.user.uid}`);
+    if (!isDemoModeEnabled) {
+      if (!isFirebaseConfigured || !auth || !db) {
+        throw Object.assign(new Error('Firebase configuration is incomplete.'), { code: 'invalid-argument' });
       }
+      const cred = await signInWithPopup(auth, googleProvider);
+      return this.loadOrEnsureUserProfile(cred.user);
     }
     return mockStore.getCurrentUser();
   },
 
   async signUp(email: string, password: string, userData: Partial<AppUser>): Promise<AppUser> {
-    if (isFirebaseConfigured && auth && db) {
+    if (!isDemoModeEnabled) {
+      if (!isFirebaseConfigured || !auth || !db) {
+        throw Object.assign(new Error('Firebase configuration is incomplete.'), { code: 'invalid-argument' });
+      }
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       sendEmailVerification(cred.user).catch(() => undefined);
 
+      // Strictly least-privileged self-registration roles only
       const safeRole: AppUser['role'] = userData.role === 'guardian' ? 'guardian' : 'boy';
       const isMinor = (userData.calculatedAge ?? 18) < 18;
       const safeStatus: AppUser['status'] =
@@ -242,18 +370,22 @@ export const firebaseService = {
         updatedAt: new Date().toISOString(),
         createdBy: cred.user.uid,
       };
-      try {
-        await setDoc(doc(db, 'users', cred.user.uid), {
+
+      await withFirestoreRetry(async () => {
+        await ensureFirestoreNetworkEnabled();
+        await setDoc(doc(db!, 'users', cred.user.uid), {
           ...stripUndefined(newUser as unknown as Record<string, unknown>),
+          safeguardingCleared: false,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
         if (safeRole === 'boy') {
-          await setDoc(doc(db, 'memberProfiles', cred.user.uid), {
+          await setDoc(doc(db!, 'memberProfiles', cred.user.uid), {
             uid: cred.user.uid,
             fullName: newUser.fullName,
             ageCategory: isMinor ? 'child_5_17' : 'young_adult_18_35',
             calculatedAge: newUser.calculatedAge || 18,
+            status: safeStatus,
             district: newUser.district || 'Kampala',
             town: newUser.town || 'Kampala',
             interests: newUser.interests || ['Brothers in Purpose Mentorship'],
@@ -264,10 +396,8 @@ export const firebaseService = {
             createdBy: cred.user.uid,
           });
         }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `users/${cred.user.uid}`);
-      }
-      mockStore.addUser(newUser);
+      });
+
       return newUser;
     }
 
@@ -792,6 +922,27 @@ export const firebaseService = {
         },
         (err) => console.warn('Event registrations listener error:', err.message)
       ),
+      onSnapshot(
+        collection(db, 'memberProfiles'),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            const p = normalizeDoc<MemberProfile>(d.id, d.data());
+            mockStore.memberProfiles[d.id] = { ...p, uid: p.uid || d.id };
+          });
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Coordinator memberProfiles listener error:', err.message)
+      ),
+      onSnapshot(
+        collection(db, 'circleMemberships'),
+        (snap) => {
+          mockStore.circleMemberships = snap.docs.map((d) =>
+            normalizeDoc<CircleMembership>(d.id, d.data())
+          );
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Coordinator circleMemberships listener error:', err.message)
+      ),
     ];
 
     if (role === 'admin') {
@@ -841,6 +992,125 @@ export const firebaseService = {
       ),
     ];
     return () => unsubs.forEach((u) => u());
+  },
+
+  subscribeMemberDirectory(uid: string, role: UserRole): Unsubscribe {
+    if (!isFirebaseConfigured || !db || !auth?.currentUser || !uid) return () => undefined;
+    if (role !== 'mentor' && role !== 'coordinator' && role !== 'admin') return () => undefined;
+
+    if (role === 'coordinator' || role === 'admin') {
+      const unsubs: Unsubscribe[] = [
+        onSnapshot(
+          collection(db, 'mentorshipCircles'),
+          (snap) => {
+            if (!snap.empty) {
+              mockStore.circles = snap.docs.map((d) => normalizeDoc<Circle>(d.id, d.data()));
+              mockStore.notifyExternalSubscribers();
+            }
+          },
+          (err) => console.warn('Directory circles listener error:', err.message)
+        ),
+        onSnapshot(
+          collection(db, 'memberProfiles'),
+          (snap) => {
+            snap.docs.forEach((d) => {
+              const p = normalizeDoc<MemberProfile>(d.id, d.data());
+              mockStore.memberProfiles[d.id] = { ...p, uid: p.uid || d.id };
+            });
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Directory memberProfiles listener error:', err.message)
+        ),
+        onSnapshot(
+          collection(db, 'circleMemberships'),
+          (snap) => {
+            mockStore.circleMemberships = snap.docs.map((d) =>
+              normalizeDoc<CircleMembership>(d.id, d.data())
+            );
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Directory circleMemberships listener error:', err.message)
+        ),
+        onSnapshot(
+          collection(db, 'users'),
+          (snap) => {
+            const map: Record<string, AppUser> = {};
+            snap.docs.forEach((d) => {
+              const u = normalizeDoc<AppUser>(d.id, d.data());
+              map[d.id] = { ...u, uid: u.uid || d.id };
+            });
+            mockStore.users = map;
+            mockStore.notifyExternalSubscribers();
+          },
+          (err) => console.warn('Directory users listener error:', err.message)
+        ),
+      ];
+      return () => unsubs.forEach((u) => u());
+    }
+
+    // Mentor role: strictly scoped to assigned circles only; never queries `users` collection.
+    let profileSub: Unsubscribe | null = null;
+    let activeCircleKey = '';
+
+    const syncProfileListener = (circleIds: string[]) => {
+      const normalized = Array.from(new Set(circleIds)).filter(Boolean).slice(0, 10);
+      const nextKey = normalized.join(',');
+      if (nextKey === activeCircleKey) return;
+      activeCircleKey = nextKey;
+      if (profileSub) {
+        profileSub();
+        profileSub = null;
+      }
+      if (normalized.length === 0 || !db) return;
+      profileSub = onSnapshot(
+        query(collection(db, 'memberProfiles'), where('circleId', 'in', normalized)),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            const p = normalizeDoc<MemberProfile>(d.id, d.data());
+            mockStore.memberProfiles[d.id] = { ...p, uid: p.uid || d.id };
+          });
+          mockStore.notifyExternalSubscribers();
+        },
+        (err) => console.warn('Mentor directory memberProfiles listener error:', err.message)
+      );
+    };
+
+    const initialAssigned = mockStore.circles
+      .filter((c) => c.leadMentorId === uid || (c.coMentorIds && c.coMentorIds.includes(uid)))
+      .map((c) => c.id);
+    syncProfileListener(initialAssigned);
+
+    const unsubCircles = onSnapshot(
+      collection(db, 'mentorshipCircles'),
+      (snap) => {
+        if (!snap.empty) {
+          mockStore.circles = snap.docs.map((d) => normalizeDoc<Circle>(d.id, d.data()));
+          const assigned = mockStore.circles
+            .filter((c) => c.leadMentorId === uid || (c.coMentorIds && c.coMentorIds.includes(uid)))
+            .map((c) => c.id);
+          syncProfileListener(assigned);
+          mockStore.notifyExternalSubscribers();
+        }
+      },
+      (err) => console.warn('Mentor directory circles listener error:', err.message)
+    );
+
+    const unsubMemberships = onSnapshot(
+      query(collection(db, 'circleMemberships'), where('leadMentorId', '==', uid)),
+      (snap) => {
+        mockStore.circleMemberships = snap.docs.map((d) =>
+          normalizeDoc<CircleMembership>(d.id, d.data())
+        );
+        mockStore.notifyExternalSubscribers();
+      },
+      (err) => console.warn('Mentor directory memberships listener error:', err.message)
+    );
+
+    return () => {
+      unsubCircles();
+      unsubMemberships();
+      if (profileSub) profileSub();
+    };
   },
 
   async getLinkedBoysForGuardianAsync(guardianUid: string): Promise<AppUser[]> {
@@ -1264,6 +1534,30 @@ export const firebaseService = {
       );
       count += 1;
     }
+    for (const mp of Object.values(mockStore.memberProfiles)) {
+      batch.set(
+        doc(db, 'memberProfiles', mp.uid),
+        {
+          ...stripUndefined(mp as unknown as Record<string, unknown>),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      count += 1;
+    }
+    for (const cm of mockStore.circleMemberships) {
+      batch.set(
+        doc(db, 'circleMemberships', cm.id),
+        {
+          ...stripUndefined(cm as unknown as Record<string, unknown>),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      count += 1;
+    }
 
     try {
       await batch.commit();
@@ -1283,6 +1577,10 @@ export const firebaseService = {
   getCircleMemberships(circleId?: string) {
     if (circleId) return mockStore.circleMemberships.filter((m) => m.circleId === circleId);
     return mockStore.circleMemberships;
+  },
+
+  getMemberDirectoryEntries(viewerUid: string, viewerRole: UserRole): MemberDirectoryEntry[] {
+    return mockStore.getMemberDirectoryEntries(viewerUid, viewerRole);
   },
 
   async assignMemberToCircle(userId: string, circleId: string) {

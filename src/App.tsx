@@ -18,6 +18,7 @@ const GuardianPage = lazy(() => import('./features/guardian/GuardianPage').then(
 const MentorDashboardPage = lazy(() => import('./features/mentor/MentorDashboardPage').then((m) => ({ default: m.MentorDashboardPage })));
 const PartnerDashboardPage = lazy(() => import('./features/partner/PartnerDashboardPage').then((m) => ({ default: m.PartnerDashboardPage })));
 const AdminConsolePage = lazy(() => import('./features/admin/AdminConsolePage').then((m) => ({ default: m.AdminConsolePage })));
+const MemberDirectoryPage = lazy(() => import('./features/directory/MemberDirectoryPage').then((m) => ({ default: m.MemberDirectoryPage })));
 const SafeguardingPage = lazy(() => import('./features/safeguarding/SafeguardingPage').then((m) => ({ default: m.SafeguardingPage })));
 const PrivacyPage = lazy(() => import('./features/legal/PrivacyPage').then((m) => ({ default: m.PrivacyPage })));
 const TermsPage = lazy(() => import('./features/legal/TermsPage').then((m) => ({ default: m.TermsPage })));
@@ -54,11 +55,27 @@ const queryClient = new QueryClient({
   },
 });
 
-const ProtectedRoute: React.FC<{
+export const ProtectedRoute: React.FC<{
   children: React.ReactNode;
   allowedRoles?: string[];
 }> = ({ children, allowedRoles }) => {
-  const { user, role, isSuspended, signOut } = useAuth();
+  const {
+    user,
+    role,
+    isSuspended,
+    isLiveFirebaseUser,
+    authReady,
+    profileStatus,
+    signOut,
+  } = useAuth();
+
+  if (!authReady || (isLiveFirebaseUser && profileStatus === 'loading')) {
+    return <RouteLoadingSkeleton />;
+  }
+
+  if (isLiveFirebaseUser && profileStatus === 'error') {
+    return <Navigate to="/auth" replace />;
+  }
 
   if (!user) {
     return <Navigate to="/auth" replace />;
@@ -85,6 +102,27 @@ const ProtectedRoute: React.FC<{
 
   if (allowedRoles && !allowedRoles.includes(role)) {
     return <Navigate to="/hub" replace />;
+  }
+
+  if (allowedRoles && user.status !== 'active') {
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center p-6 bg-[#F8FAFC]">
+        <div className="max-w-md bg-white rounded-2xl p-8 border border-amber-200 text-center space-y-3">
+          <h2 className="font-heading text-lg font-bold text-[#1B365D]">Account Pending Approval</h2>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Your account is currently awaiting verification or guardian consent before restricted operational portals can be accessed.
+          </p>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => signOut()}
+              className="px-4 py-2 bg-[#1B365D] text-white text-xs font-bold rounded-xl min-h-[40px]"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return <>{children}</>;
@@ -256,6 +294,14 @@ export default function App() {
                       element={
                         <ProtectedRoute allowedRoles={['coordinator', 'admin']}>
                           <SafeguardingCommandPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/directory"
+                      element={
+                        <ProtectedRoute allowedRoles={['mentor', 'coordinator', 'admin']}>
+                          <MemberDirectoryPage />
                         </ProtectedRoute>
                       }
                     />

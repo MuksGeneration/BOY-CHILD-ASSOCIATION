@@ -52,6 +52,9 @@ export const Navbar: React.FC = () => {
 
   const exploreLinks = [
     { label: 'Mentorship Circles', path: '/mentorship-circles' },
+    ...(role === 'mentor' || role === 'coordinator' || role === 'admin'
+      ? [{ label: 'Member Directory', path: '/directory' }]
+      : []),
     { label: 'National Overview', path: '/national-dashboard' },
     { label: 'Verify Member QR', path: '/verify' },
     { label: 'Verify Certificate', path: '/verify-certificate' },
@@ -254,6 +257,15 @@ export const Navbar: React.FC = () => {
                       >
                         Open {roleDashboardLink.label} &rarr;
                       </Link>
+                      {(role === 'mentor' || role === 'coordinator' || role === 'admin') && (
+                        <Link
+                          to="/directory"
+                          onClick={() => setPersonaMenuOpen(false)}
+                          className="block py-1 text-xs font-semibold text-[#005A9C] hover:underline"
+                        >
+                          Member Directory &rarr;
+                        </Link>
+                      )}
                       <Link
                         to="/learn"
                         onClick={() => setPersonaMenuOpen(false)}

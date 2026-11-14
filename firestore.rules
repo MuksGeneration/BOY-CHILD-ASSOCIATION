@@ -166,7 +166,8 @@ service cloud.firestore {
       allow get: if isOwner(uid) || isCoordinator() || isVerifiedGuardianOf(uid);
       allow list: if isCoordinator();
 
-      allow create: if isOwner(uid)
+      allow create: if isAdmin() || (
+        isOwner(uid)
         && isValidId(uid)
         && request.resource.data.keys().hasAll(['uid', 'email', 'fullName', 'role', 'status', 'createdAt', 'updatedAt', 'createdBy'])
         && request.resource.data.uid == uid
@@ -178,7 +179,8 @@ service cloud.firestore {
         && isNonEmptyString(request.resource.data.fullName, 2, 80)
         && isNonEmptyString(request.resource.data.email, 3, 254)
         && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time;
+        && request.resource.data.updatedAt == request.time
+      );
 
       allow update: if (
         isOwner(uid)

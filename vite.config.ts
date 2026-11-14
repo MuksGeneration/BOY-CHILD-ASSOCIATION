@@ -50,6 +50,7 @@ export default defineConfig(() => {
             /^\/api/,
             /^\/images/,
             /^\/assets/,
+            /^\/__\//,
             /\.(png|jpg|jpeg|svg|webp|ico|webmanifest)$/i,
           ],
           runtimeCaching: [
@@ -103,6 +104,14 @@ export default defineConfig(() => {
             },
             {
               urlPattern: /^https:\/\/.*\.run\.app\/.*/i,
+              handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: /^https:\/\/firebaseappcheck\.googleapis\.com\/.*/i,
+              handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: /^https:\/\/(www\.)?(google|gstatic)\.com\/recaptcha\/.*/i,
               handler: 'NetworkOnly',
             },
           ],

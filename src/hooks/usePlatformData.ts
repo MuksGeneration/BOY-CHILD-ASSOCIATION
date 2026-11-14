@@ -80,3 +80,12 @@ export function useCourseWorkspaceData(courseId?: string, uid?: string, role?: U
   }, [courseId, uid, role]);
   return tick;
 }
+
+export function useMemberDirectoryData(uid?: string, role?: UserRole): number {
+  const tick = useStoreTick();
+  useEffect(() => {
+    if (!uid || !role) return;
+    return firebaseService.subscribeMemberDirectory(uid, role);
+  }, [uid, role]);
+  return tick;
+}

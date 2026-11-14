@@ -68,6 +68,7 @@ export interface MemberProfile {
   fullName: string;
   ageCategory: 'child_5_17' | 'young_adult_18_35';
   calculatedAge: number;
+  status?: UserStatus;
   district: string;
   town: string;
   schoolOrOccupation?: string;
@@ -81,6 +82,28 @@ export interface MemberProfile {
   createdAt: string;
   updatedAt: string;
   createdBy: string;
+}
+
+export interface MemberDirectoryEntry {
+  uid: string;
+  fullName: string;
+  ageCategory: 'child_5_17' | 'young_adult_18_35';
+  calculatedAge: number;
+  district: string;
+  town: string;
+  status: UserStatus;
+  membershipNumber?: string;
+  schoolOrOccupation?: string;
+  interests: string[];
+  circleId?: string;
+  circleName?: string;
+  circleDistrict?: string;
+  circleMeetingTime?: string;
+  leadMentorName?: string;
+  circleMembershipStatus?: 'active' | 'paused' | 'completed';
+  attendanceCount: number;
+  achievements: { id: string; title: string; awardedAt: string; badgeType: string }[];
+  guardianConsentStatus: 'verified' | 'pending' | 'self_consent';
 }
 
 export interface GuardianLink {

@@ -7,6 +7,7 @@ import { mockStore } from '../../lib/firebase/mockStore';
 import { UserRole } from '../../types';
 import { CmsEditorTab } from './CmsEditorTab';
 import { SafeguardingCommandView } from '../safeguarding/SafeguardingCommandPage';
+import { MemberDirectory } from '../../components/directory/MemberDirectory';
 import {
   ShieldAlert,
   GraduationCap,
@@ -28,6 +29,7 @@ type ConsoleTab =
   | 'safeguarding'
   | 'applications'
   | 'circles'
+  | 'directory'
   | 'analytics'
   | 'users_dppa'
   | 'cms'
@@ -165,6 +167,7 @@ export const AdminConsolePage: React.FC = () => {
     { id: 'safeguarding', label: `Safeguarding Cases (${cases.length})`, icon: ShieldAlert },
     { id: 'applications', label: 'Applications & Vetting', icon: GraduationCap },
     { id: 'circles', label: `Circles & Attendance (${circles.length})`, icon: Users },
+    { id: 'directory', label: 'Member Directory', icon: Search },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'users_dppa', label: 'Users, RBAC & DPPA', icon: UserCog, adminOnly: true },
     { id: 'cms', label: 'Admin CMS', icon: Globe, adminOnly: true },
@@ -600,6 +603,9 @@ export const AdminConsolePage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* 3B. SECURE MEMBER DIRECTORY */}
+        {activeTab === 'directory' && <MemberDirectory embedded />}
 
         {/* 4. AGGREGATED ANALYTICS (ZERO MINOR PII) */}
         {activeTab === 'analytics' && (

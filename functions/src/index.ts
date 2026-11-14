@@ -2802,4 +2802,131 @@ export const dispatchLiveClassReminders = onCall(async (request) => {
   return { notifiedCount: enrollSnap.size };
 });
 
+// 52. ensureUserProfile (Secure least-privileged post-authentication profile bootstrap)
+export const ensureUserProfile = onCall(async (request: CallableRequest) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication is required to initialize profile.');
+  }
+  if (request.auth.token.suspended === true) {
+    throw new HttpsError('permission-denied', 'Account is suspended.');
+  }
+
+  const uid = request.auth.uid;
+  const tokenEmail = typeof request.auth.token.email === 'string' ? request.auth.token.email : '';
+  const emailVerified = Boolean(request.auth.token.email_verified);
+  const displayNameRaw =
+    typeof request.auth.token.name === 'string' && request.auth.token.name.trim().length >= 2
+      ? request.auth.token.name
+      : tokenEmail
+      ? tokenEmail.split('@')[0]
+      : 'BCA Member';
+  const fullName = sanitize(displayNameRaw).slice(0, 80) || 'BCA Member';
+  const phone = typeof request.auth.token.phone_number === 'string' ? request.auth.token.phone_number : undefined;
+
+  const userRef = db.collection('users').doc(uid);
+  const existingSnap = await userRef.get();
+
+  if (existingSnap.exists) {
+    const existingData = existingSnap.data() || {};
+    if (existingData.status === 'suspended' || request.auth.token.suspended === true) {
+      throw new HttpsError('permission-denied', 'Account is suspended.');
+    }
+    const patch: Record<string, unknown> = {};
+    if (existingData.emailVerified !== emailVerified) {
+      patch.emailVerified = emailVerified;
+      patch.updatedAt = FieldValue.serverTimestamp();
+      await userRef.update(patch);
+    }
+    return {
+      created: false,
+      profile: {
+        ...existingData,
+        uid,
+        emailVerified,
+      },
+    };
+  }
+
+  const validRoles: UserRole[] = [
+    'boy',
+    'guardian',
+    'mentor',
+    'partner',
+    'coordinator',
+    'instructor',
+    'learning_manager',
+    'admin',
+  ];
+  const claimRole = request.auth.token.role as UserRole | undefined;
+  const isBootstrapAdmin = tokenEmail.toLowerCase() === 'mukuladavid6@gmail.com' && emailVerified;
+  const resolvedRole: UserRole = isBootstrapAdmin
+    ? 'admin'
+    : claimRole && validRoles.includes(claimRole)
+    ? claimRole
+    : 'boy';
+
+  // Least-privileged initial status: preserve verification & guardian consent gates for non-admin accounts
+  const initialStatus =
+    resolvedRole === 'admin'
+      ? 'active'
+      : resolvedRole === 'boy'
+      ? 'pending_guardian_consent'
+      : 'pending_vetting';
+
+  const safeguardingCleared = resolvedRole === 'admin' || Boolean(request.auth.token.safeguardingCleared);
+  const instructorAuthorized =
+    resolvedRole === 'admin' ||
+    resolvedRole === 'instructor' ||
+    resolvedRole === 'learning_manager' ||
+    Boolean(request.auth.token.instructorAuthorized);
+
+  const newProfile: Record<string, unknown> = {
+    uid,
+    email: tokenEmail,
+    fullName,
+    ...(phone ? { phone } : {}),
+    role: resolvedRole,
+    status: initialStatus,
+    ageCategory: resolvedRole === 'boy' ? 'child_5_17' : 'adult',
+    safeguardingCleared,
+    instructorAuthorized,
+    emailVerified,
+    district: 'Kampala',
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    createdBy: uid,
+  };
+
+  await userRef.set(newProfile);
+
+  if (isBootstrapAdmin) {
+    await adminAuth
+      .setCustomUserClaims(uid, {
+        role: 'admin',
+        safeguardingCleared: true,
+        instructorAuthorized: true,
+      })
+      .catch(() => undefined);
+  }
+
+  await writeAuditLog({
+    action: 'USER_PROFILE_INITIALIZED',
+    performedBy: fullName,
+    performedByRole: resolvedRole,
+    targetEntity: 'users',
+    targetId: uid,
+    details: `Initialized profile with least-privileged status ${initialStatus} and role ${resolvedRole}`,
+  });
+
+  return {
+    created: true,
+    profile: {
+      ...newProfile,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+});
+
+
 

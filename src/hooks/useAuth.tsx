@@ -1,10 +1,30 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AppUser, UserRole } from '../types';
 import { mockStore } from '../lib/firebase/mockStore';
-import { firebaseService, isDemoModeEnabled, normalizeDoc } from '../lib/firebase/firebase';
-import { auth, db, isFirebaseConfigured } from '../lib/firebase/config';
+import { firebaseService, isDemoModeEnabled } from '../lib/firebase/firebase';
+import {
+  auth,
+  db,
+  isFirebaseConfigured,
+  ensureFirestoreNetworkEnabled,
+  getFirebaseDiagnosticSnapshot,
+} from '../lib/firebase/config';
+import {
+  classifyFirestoreError,
+  FirestoreConnectivityState,
+  FirestoreDiagnosticResult,
+  FirestoreErrorCategory,
+} from '../lib/firebase/diagnostics';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+
+export type ProfileLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export interface ProfileLoadError {
+  category: FirestoreErrorCategory;
+  diagnosticRef: string;
+  message: string;
+  retryable: boolean;
+}
 
 interface AuthContextType {
   user: AppUser | null;
@@ -13,9 +33,16 @@ interface AuthContextType {
   isSuspended: boolean;
   isLiveFirebaseUser: boolean;
   authReady: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
-  signUp: (email: string, password: string, userData: Partial<AppUser>) => Promise<void>;
+  profileStatus: ProfileLoadStatus;
+  profileError: ProfileLoadError | null;
+  connectivityStatus: FirestoreConnectivityState;
+  connectivityLatencyMs: number | null;
+  firebaseConfigDiagnostic: ReturnType<typeof getFirebaseDiagnosticSnapshot>;
+  checkFirestoreConnectivity: () => Promise<FirestoreDiagnosticResult>;
+  retryProfileLoad: () => Promise<AppUser | null>;
+  signIn: (email: string, password: string) => Promise<AppUser>;
+  signInWithGoogle: () => Promise<AppUser>;
+  signUp: (email: string, password: string, userData: Partial<AppUser>) => Promise<AppUser>;
   resetPassword: (email: string) => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -25,39 +52,90 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function buildFallbackLiveUser(
-  fbUser: FirebaseUser,
-  claimRole?: UserRole,
-  claimCleared = false,
-  claimInstructorAuthorized = false
-): AppUser {
-  const isBootstrapAdmin = fbUser.email === 'mukuladavid6@gmail.com' && fbUser.emailVerified;
-  const fallbackRole: UserRole = isBootstrapAdmin ? 'admin' : claimRole || 'boy';
-  return {
-    uid: fbUser.uid,
-    email: fbUser.email || '',
-    fullName: fbUser.displayName || 'BCA Member',
-    role: fallbackRole,
-    status: 'active',
-    safeguardingCleared: fallbackRole === 'admin' || claimCleared,
-    instructorAuthorized: fallbackRole === 'admin' || fallbackRole === 'instructor' || fallbackRole === 'learning_manager' || claimInstructorAuthorized,
-    emailVerified: fbUser.emailVerified,
-    district: 'Kampala',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    createdBy: fbUser.uid,
-  };
-}
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AppUser | null>(() =>
     isDemoModeEnabled ? mockStore.getCurrentUser() : null
   );
   const [isLiveFirebaseUser, setIsLiveFirebaseUser] = useState(false);
-  const [authReady, setAuthReady] = useState(false);
+  const [authReady, setAuthReady] = useState(() => isDemoModeEnabled);
+  const [profileStatus, setProfileStatus] = useState<ProfileLoadStatus>(() =>
+    isDemoModeEnabled ? 'ready' : 'idle'
+  );
+  const [profileError, setProfileError] = useState<ProfileLoadError | null>(null);
+  const [connectivityStatus, setConnectivityStatus] = useState<FirestoreConnectivityState>(
+    isFirebaseConfigured ? 'checking' : 'misconfigured'
+  );
+  const [connectivityLatencyMs, setConnectivityLatencyMs] = useState<number | null>(null);
+
+  const profileStatusRef = useRef<ProfileLoadStatus>(profileStatus);
+  profileStatusRef.current = profileStatus;
+  const syncSeqRef = useRef(0);
+
+  const checkFirestoreConnectivity = useCallback(async (): Promise<FirestoreDiagnosticResult> => {
+    setConnectivityStatus('checking');
+    const result = await firebaseService.diagnoseConnectivity();
+    setConnectivityStatus(result.state);
+    setConnectivityLatencyMs(result.latencyMs);
+    return result;
+  }, []);
+
+  const syncFirebaseUserProfile = useCallback(async (fbUser: FirebaseUser): Promise<AppUser | null> => {
+    const seq = ++syncSeqRef.current;
+    setIsLiveFirebaseUser(true);
+    setProfileStatus('loading');
+    setProfileError(null);
+
+    try {
+      const loadedProfile = await firebaseService.loadOrEnsureUserProfile(fbUser);
+      if (seq !== syncSeqRef.current) return null;
+
+      setUser(loadedProfile);
+      setProfileStatus('ready');
+      setProfileError(null);
+      setConnectivityStatus('connected');
+      return loadedProfile;
+    } catch (err) {
+      if (seq !== syncSeqRef.current) return null;
+
+      const msg = err instanceof Error ? err.message : String(err || '');
+      if (msg.toLowerCase().includes('suspended')) {
+        setIsLiveFirebaseUser(false);
+        setUser(null);
+        setProfileStatus('idle');
+        setProfileError({
+          category: 'permission-denied',
+          diagnosticRef: 'BCA-ACCT-SUSPENDED',
+          message: 'This account has been suspended pending an administrative or safeguarding review.',
+          retryable: false,
+        });
+        return null;
+      }
+
+      const classified = classifyFirestoreError(err);
+      setUser(null);
+      setProfileStatus('error');
+      setConnectivityStatus(classified.connectivityState);
+      setProfileError({
+        category: classified.category,
+        diagnosticRef: classified.diagnosticRef,
+        message: classified.userMessage,
+        retryable: classified.retryable,
+      });
+      return null;
+    }
+  }, []);
+
+  const retryProfileLoad = useCallback(async (): Promise<AppUser | null> => {
+    if (!auth?.currentUser) return null;
+    await ensureFirestoreNetworkEnabled();
+    await checkFirestoreConnectivity();
+    return syncFirebaseUserProfile(auth.currentUser);
+  }, [checkFirestoreConnectivity, syncFirebaseUserProfile]);
 
   useEffect(() => {
-    firebaseService.testConnection().catch(() => undefined);
+    if (!isDemoModeEnabled) {
+      checkFirestoreConnectivity().catch(() => undefined);
+    }
 
     const unsubscribeStore = mockStore.subscribe(() => {
       if (isDemoModeEnabled && !auth?.currentUser) {
@@ -66,43 +144,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     let unsubscribeFb = () => {};
-    if (isFirebaseConfigured && auth && db) {
+    if (!isDemoModeEnabled && isFirebaseConfigured && auth && db) {
       unsubscribeFb = onAuthStateChanged(auth, async (fbUser) => {
-        if (fbUser && db) {
-          const tokenResult = await fbUser.getIdTokenResult().catch(() => null);
-          const claimRole = tokenResult?.claims?.role as UserRole | undefined;
-          const claimCleared = Boolean(tokenResult?.claims?.safeguardingCleared);
-          const claimInstructorAuthorized = Boolean(tokenResult?.claims?.instructorAuthorized);
-
-          try {
-            const snap = await getDoc(doc(db, 'users', fbUser.uid));
-            if (snap.exists()) {
-              const data = normalizeDoc<AppUser>(snap.id, snap.data());
-              const resolvedRole = claimRole || data.role;
-              setUser({
-                ...data,
-                uid: fbUser.uid,
-                role: resolvedRole,
-                safeguardingCleared: resolvedRole === 'admin' || claimCleared || data.safeguardingCleared,
-                instructorAuthorized:
-                  resolvedRole === 'admin' ||
-                  resolvedRole === 'instructor' ||
-                  resolvedRole === 'learning_manager' ||
-                  claimInstructorAuthorized ||
-                  Boolean(data.instructorAuthorized),
-                emailVerified: fbUser.emailVerified,
-              });
-            } else {
-              setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared, claimInstructorAuthorized));
-            }
-          } catch (err) {
-            console.warn('Firestore user profile read fallback to token claims:', err);
-            setUser(buildFallbackLiveUser(fbUser, claimRole, claimCleared, claimInstructorAuthorized));
-          }
-          setIsLiveFirebaseUser(true);
+        if (fbUser) {
+          await syncFirebaseUserProfile(fbUser);
         } else {
+          syncSeqRef.current += 1;
           setIsLiveFirebaseUser(false);
-          setUser(isDemoModeEnabled ? { ...mockStore.getCurrentUser() } : null);
+          setUser(null);
+          setProfileStatus('idle');
+          setProfileError(null);
         }
         setAuthReady(true);
       });
@@ -110,25 +161,123 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthReady(true);
     }
 
+    const handleOnline = async () => {
+      await ensureFirestoreNetworkEnabled();
+      if (!isDemoModeEnabled) {
+        await checkFirestoreConnectivity().catch(() => undefined);
+      }
+      if (auth?.currentUser && profileStatusRef.current === 'error') {
+        await syncFirebaseUserProfile(auth.currentUser);
+      }
+    };
+
+    const handleOffline = () => {
+      setConnectivityStatus('unreachable');
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+    }
+
     return () => {
       unsubscribeStore();
       unsubscribeFb();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      }
     };
-  }, []);
+  }, [checkFirestoreConnectivity, syncFirebaseUserProfile]);
 
-  const signIn = async (email: string, password: string) => {
-    const loggedIn = await firebaseService.signIn(email, password);
-    setUser({ ...loggedIn });
+  const signIn = async (email: string, password: string): Promise<AppUser> => {
+    try {
+      const loggedIn = await firebaseService.signIn(email, password);
+      syncSeqRef.current += 1;
+      setUser({ ...loggedIn });
+      setProfileStatus('ready');
+      setProfileError(null);
+      if (!isDemoModeEnabled && auth?.currentUser) {
+        setIsLiveFirebaseUser(true);
+        setConnectivityStatus('connected');
+      }
+      return loggedIn;
+    } catch (err) {
+      if (!isDemoModeEnabled && auth?.currentUser) {
+        const classified = classifyFirestoreError(err);
+        setIsLiveFirebaseUser(true);
+        setUser(null);
+        setProfileStatus('error');
+        setConnectivityStatus(classified.connectivityState);
+        setProfileError({
+          category: classified.category,
+          diagnosticRef: classified.diagnosticRef,
+          message: classified.userMessage,
+          retryable: classified.retryable,
+        });
+      }
+      throw err;
+    }
   };
 
-  const signInWithGoogle = async () => {
-    const loggedIn = await firebaseService.signInWithGoogle();
-    setUser({ ...loggedIn });
+  const signInWithGoogle = async (): Promise<AppUser> => {
+    try {
+      const loggedIn = await firebaseService.signInWithGoogle();
+      syncSeqRef.current += 1;
+      setUser({ ...loggedIn });
+      setProfileStatus('ready');
+      setProfileError(null);
+      if (!isDemoModeEnabled && auth?.currentUser) {
+        setIsLiveFirebaseUser(true);
+        setConnectivityStatus('connected');
+      }
+      return loggedIn;
+    } catch (err) {
+      if (!isDemoModeEnabled && auth?.currentUser) {
+        const classified = classifyFirestoreError(err);
+        setIsLiveFirebaseUser(true);
+        setUser(null);
+        setProfileStatus('error');
+        setConnectivityStatus(classified.connectivityState);
+        setProfileError({
+          category: classified.category,
+          diagnosticRef: classified.diagnosticRef,
+          message: classified.userMessage,
+          retryable: classified.retryable,
+        });
+      }
+      throw err;
+    }
   };
 
-  const signUp = async (email: string, password: string, userData: Partial<AppUser>) => {
-    const newUser = await firebaseService.signUp(email, password, userData);
-    setUser({ ...newUser });
+  const signUp = async (email: string, password: string, userData: Partial<AppUser>): Promise<AppUser> => {
+    try {
+      const newUser = await firebaseService.signUp(email, password, userData);
+      syncSeqRef.current += 1;
+      setUser({ ...newUser });
+      setProfileStatus('ready');
+      setProfileError(null);
+      if (!isDemoModeEnabled && auth?.currentUser) {
+        setIsLiveFirebaseUser(true);
+        setConnectivityStatus('connected');
+      }
+      return newUser;
+    } catch (err) {
+      if (!isDemoModeEnabled && auth?.currentUser) {
+        const classified = classifyFirestoreError(err);
+        setIsLiveFirebaseUser(true);
+        setUser(null);
+        setProfileStatus('error');
+        setConnectivityStatus(classified.connectivityState);
+        setProfileError({
+          category: classified.category,
+          diagnosticRef: classified.diagnosticRef,
+          message: classified.userMessage,
+          retryable: classified.retryable,
+        });
+      }
+      throw err;
+    }
   };
 
   const resetPassword = async (email: string) => {
@@ -140,13 +289,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    syncSeqRef.current += 1;
     await firebaseService.signOut();
     setIsLiveFirebaseUser(false);
+    setProfileError(null);
     if (isDemoModeEnabled) {
       mockStore.switchUser('usr_boy_active');
       setUser({ ...mockStore.getCurrentUser() });
+      setProfileStatus('ready');
     } else {
       setUser(null);
+      setProfileStatus('idle');
     }
   };
 
@@ -154,6 +307,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!isDemoModeEnabled || isLiveFirebaseUser) return;
     mockStore.switchUser(uid);
     setUser({ ...mockStore.getCurrentUser() });
+    setProfileStatus('ready');
   };
 
   const isUnder18Pending = user?.role === 'boy' && user?.status === 'pending_guardian_consent';
@@ -168,6 +322,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isSuspended,
         isLiveFirebaseUser,
         authReady,
+        profileStatus,
+        profileError,
+        connectivityStatus,
+        connectivityLatencyMs,
+        firebaseConfigDiagnostic: getFirebaseDiagnosticSnapshot(),
+        checkFirestoreConnectivity,
+        retryProfileLoad,
         signIn,
         signInWithGoogle,
         signUp,

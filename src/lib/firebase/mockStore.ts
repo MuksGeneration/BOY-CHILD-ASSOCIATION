@@ -1,6 +1,7 @@
 import {
   AppUser,
   MemberProfile,
+  MemberDirectoryEntry,
   GuardianLink,
   ConsentRecord,
   MembershipApplication,
@@ -30,6 +31,7 @@ import {
   CmsSettingsBundle,
   CmsStatus,
   UserRole,
+  UserStatus,
   AttachmentMeta,
   ContactMessage,
   MentorProgressReport,
@@ -248,6 +250,31 @@ const INITIAL_USERS: Record<string, AppUser> = {
     createdAt: '2026-09-02T09:00:00Z',
     updatedAt: '2026-11-05T11:00:00Z',
     createdBy: 'usr_young_adult',
+  },
+  usr_boy_wakiso: {
+    uid: 'usr_boy_wakiso',
+    email: 'brian.ssemogerere@boychild.demo',
+    fullName: 'Brian Ssemogerere',
+    phone: '+256774119988',
+    role: 'boy',
+    status: 'active',
+    ageCategory: 'child_5_17',
+    membershipNumber: 'BCA-UG-2026-0103',
+    membershipIssuedAt: '2026-09-18T10:00:00Z',
+    membershipQrToken: 'QR-BCA103UG',
+    emailVerified: true,
+    district: 'Wakiso',
+    town: 'Kira Town Council',
+    calculatedAge: 16,
+    guardianId: 'usr_guardian_grace',
+    guardianName: 'Grace Mukasa',
+    guardianPhone: '+256772334455',
+    circleId: 'circle_wakiso_builders',
+    schoolOrOccupation: 'St. Lucia Kira SS S.3',
+    interests: ['Digital Crafts & Solar Tinkering', 'Clean Energy Trades'],
+    createdAt: '2026-09-18T09:00:00Z',
+    updatedAt: '2026-11-02T10:00:00Z',
+    createdBy: 'system',
   },
   usr_guardian_grace: {
     uid: 'usr_guardian_grace',
@@ -496,6 +523,17 @@ const INITIAL_CIRCLE_MEMBERSHIPS: CircleMembership[] = [
     status: 'active',
     createdAt: '2026-09-03T11:00:00Z',
     updatedAt: '2026-09-03T11:00:00Z',
+  },
+  {
+    id: 'circle_wakiso_builders_usr_boy_wakiso',
+    circleId: 'circle_wakiso_builders',
+    userId: 'usr_boy_wakiso',
+    memberName: 'Brian Ssemogerere',
+    ageCategory: 'child_5_17',
+    leadMentorId: 'usr_mentor_dennis',
+    status: 'active',
+    createdAt: '2026-09-18T10:15:00Z',
+    updatedAt: '2026-09-18T10:15:00Z',
   },
 ];
 
@@ -1125,6 +1163,7 @@ class MockStore {
         fullName: 'David Mukasa',
         ageCategory: 'child_5_17',
         calculatedAge: 17,
+        status: 'active',
         district: 'Kampala',
         town: 'Old Kampala',
         schoolOrOccupation: 'Old Kampala SS S.4',
@@ -1146,6 +1185,7 @@ class MockStore {
         fullName: 'Samuel Kiggundu',
         ageCategory: 'young_adult_18_35',
         calculatedAge: 21,
+        status: 'active',
         district: 'Kampala',
         town: 'Nakawa Division',
         schoolOrOccupation: 'Nakawa Vocational Solar Apprentice',
@@ -1159,6 +1199,27 @@ class MockStore {
         createdAt: '2026-09-02T09:00:00Z',
         updatedAt: '2026-11-05T11:00:00Z',
         createdBy: 'usr_young_adult',
+      },
+      usr_boy_wakiso: {
+        uid: 'usr_boy_wakiso',
+        fullName: 'Brian Ssemogerere',
+        ageCategory: 'child_5_17',
+        calculatedAge: 16,
+        status: 'active',
+        district: 'Wakiso',
+        town: 'Kira Town Council',
+        schoolOrOccupation: 'St. Lucia Kira SS S.3',
+        interests: ['Digital Crafts & Solar Tinkering', 'Clean Energy Trades'],
+        circleId: 'circle_wakiso_builders',
+        guardianId: 'usr_guardian_grace',
+        membershipNumber: 'BCA-UG-2026-0103',
+        achievements: [
+          { id: 'ach_4', title: 'Wakiso Community Clean-Up Lead', awardedAt: '2026-10-20', badgeType: 'Service' },
+        ],
+        attendanceCount: 9,
+        createdAt: '2026-09-18T09:00:00Z',
+        updatedAt: '2026-11-02T10:00:00Z',
+        createdBy: 'system',
       },
     };
     this.guardianLinks = [...INITIAL_GUARDIAN_LINKS];
@@ -1844,6 +1905,7 @@ class MockStore {
         fullName: user.fullName,
         ageCategory: (user.calculatedAge || 16) < 18 ? 'child_5_17' : 'young_adult_18_35',
         calculatedAge: user.calculatedAge || 16,
+        status: user.status,
         district: user.district || 'Kampala',
         town: user.town || 'Kampala Central',
         schoolOrOccupation: user.schoolOrOccupation,
@@ -2001,6 +2063,14 @@ class MockStore {
     boyUser.circleId = boyUser.circleId || 'circle_kampala_central';
     boyUser.updatedAt = new Date().toISOString();
     this.issueMembershipCard(boyUid);
+    if (this.memberProfiles[boyUid]) {
+      this.memberProfiles[boyUid] = {
+        ...this.memberProfiles[boyUid],
+        status: 'active',
+        circleId: boyUser.circleId,
+        updatedAt: boyUser.updatedAt,
+      };
+    }
 
     const rec: ConsentRecord = {
       id: `consent_${Date.now()}`,
@@ -2032,6 +2102,13 @@ class MockStore {
     if (this.users[boyUid]) {
       this.users[boyUid].status = 'pending_guardian_consent';
       this.users[boyUid].updatedAt = new Date().toISOString();
+      if (this.memberProfiles[boyUid]) {
+        this.memberProfiles[boyUid] = {
+          ...this.memberProfiles[boyUid],
+          status: 'pending_guardian_consent',
+          updatedAt: this.users[boyUid].updatedAt,
+        };
+      }
       const rec: ConsentRecord = {
         id: `consent_${Date.now()}`,
         boyId: boyUid,
@@ -2083,6 +2160,13 @@ class MockStore {
     if (decision === 'approved' && this.users[app.applicantUid]) {
       const nextStatus = app.ageCategory === 'child_5_17' ? 'pending_guardian_consent' : 'active';
       this.users[app.applicantUid].status = nextStatus;
+      if (this.memberProfiles[app.applicantUid]) {
+        this.memberProfiles[app.applicantUid] = {
+          ...this.memberProfiles[app.applicantUid],
+          status: nextStatus,
+          updatedAt: new Date().toISOString(),
+        };
+      }
       if (nextStatus === 'active') {
         this.issueMembershipCard(app.applicantUid);
       }
@@ -2394,6 +2478,14 @@ class MockStore {
       throw new Error('Cannot assign member until account is active.');
     }
     user.circleId = circleId;
+    if (this.memberProfiles[userId]) {
+      this.memberProfiles[userId] = {
+        ...this.memberProfiles[userId],
+        circleId,
+        status: user.status,
+        updatedAt: new Date().toISOString(),
+      };
+    }
     const membership: CircleMembership = {
       id: `${circleId}_${userId}`,
       circleId,
@@ -2536,6 +2628,13 @@ class MockStore {
     u.status = suspend ? 'suspended' : 'active';
     u.suspensionReason = suspend ? reason : undefined;
     u.updatedAt = new Date().toISOString();
+    if (this.memberProfiles[targetUid]) {
+      this.memberProfiles[targetUid] = {
+        ...this.memberProfiles[targetUid],
+        status: u.status,
+        updatedAt: u.updatedAt,
+      };
+    }
     this.addAuditLog({
       action: suspend ? 'USER_SUSPENDED' : 'USER_REACTIVATED',
       performedBy: this.getCurrentUser().fullName,
@@ -3671,6 +3770,94 @@ class MockStore {
       n.read = true;
       this.notifyListeners();
     }
+  }
+
+  getMemberDirectoryEntries(viewerUid: string, viewerRole: UserRole): MemberDirectoryEntry[] {
+    if (!viewerUid) return [];
+    if (viewerRole !== 'mentor' && viewerRole !== 'coordinator' && viewerRole !== 'admin') {
+      return [];
+    }
+
+    const assignedCircleIds =
+      viewerRole === 'mentor'
+        ? this.circles
+            .filter((c) => c.leadMentorId === viewerUid || (c.coMentorIds && c.coMentorIds.includes(viewerUid)))
+            .map((c) => c.id)
+        : [];
+
+    const circleById = new Map(this.circles.map((c) => [c.id, c]));
+    const membershipByUserId = new Map<string, CircleMembership>();
+    this.circleMemberships.forEach((m) => {
+      if (!membershipByUserId.has(m.userId)) {
+        membershipByUserId.set(m.userId, m);
+      }
+    });
+
+    const entriesByUid = new Map<string, MemberDirectoryEntry>();
+
+    const upsertEntry = (uid: string) => {
+      const profile = this.memberProfiles[uid];
+      const userDoc = viewerRole === 'coordinator' || viewerRole === 'admin' ? this.users[uid] : undefined;
+      const membership = membershipByUserId.get(uid);
+
+      if (!profile && !userDoc && !membership) return;
+      if (userDoc && userDoc.role !== 'boy') return;
+
+      const circleId = profile?.circleId || membership?.circleId || userDoc?.circleId;
+      if (viewerRole === 'mentor') {
+        if (!circleId || !assignedCircleIds.includes(circleId)) return;
+      }
+
+      const circle = circleId ? circleById.get(circleId) : undefined;
+      const age = profile?.calculatedAge ?? userDoc?.calculatedAge ?? 16;
+      const ageCategory: 'child_5_17' | 'young_adult_18_35' =
+        profile?.ageCategory ||
+        membership?.ageCategory ||
+        (age < 18 ? 'child_5_17' : 'young_adult_18_35');
+      const status: UserStatus =
+        profile?.status ||
+        userDoc?.status ||
+        (membership?.status === 'active' ? 'active' : 'pending_guardian_consent');
+
+      const guardianConsentStatus: MemberDirectoryEntry['guardianConsentStatus'] =
+        ageCategory === 'young_adult_18_35'
+          ? 'self_consent'
+          : status === 'active'
+            ? 'verified'
+            : 'pending';
+
+      entriesByUid.set(uid, {
+        uid,
+        fullName: profile?.fullName || userDoc?.fullName || membership?.memberName || 'BCA Member',
+        ageCategory,
+        calculatedAge: age,
+        district: profile?.district || userDoc?.district || circle?.district || 'Kampala',
+        town: profile?.town || userDoc?.town || 'District Chapter',
+        status,
+        membershipNumber: profile?.membershipNumber || userDoc?.membershipNumber,
+        schoolOrOccupation: profile?.schoolOrOccupation || userDoc?.schoolOrOccupation,
+        interests: profile?.interests || userDoc?.interests || [],
+        circleId,
+        circleName: circle?.name,
+        circleDistrict: circle?.district,
+        circleMeetingTime: circle?.meetingTime,
+        leadMentorName: circle?.leadMentorName,
+        circleMembershipStatus: membership?.status,
+        attendanceCount: profile?.attendanceCount ?? 0,
+        achievements: profile?.achievements || [],
+        guardianConsentStatus,
+      });
+    };
+
+    Object.keys(this.memberProfiles).forEach(upsertEntry);
+    this.circleMemberships.forEach((m) => upsertEntry(m.userId));
+    if (viewerRole === 'coordinator' || viewerRole === 'admin') {
+      Object.values(this.users)
+        .filter((u) => u.role === 'boy')
+        .forEach((u) => upsertEntry(u.uid));
+    }
+
+    return Array.from(entriesByUid.values()).sort((a, b) => a.fullName.localeCompare(b.fullName));
   }
 
   notifyExternalSubscribers() {

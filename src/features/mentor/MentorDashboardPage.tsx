@@ -5,6 +5,7 @@ import { useMentorData, usePublicCatalog } from '../../hooks/usePlatformData';
 import { firebaseService } from '../../lib/firebase/firebase';
 import { mockStore } from '../../lib/firebase/mockStore';
 import { detectSafeguardingBreachInText, mentorProgressReportSchema } from '../../lib/validation/schemas';
+import { MemberDirectory } from '../../components/directory/MemberDirectory';
 import {
   ShieldCheck,
   Users,
@@ -20,9 +21,10 @@ import {
   Lock,
   UserCheck,
   FileText,
+  Search,
 } from 'lucide-react';
 
-type MentorTab = 'circles' | 'attendance' | 'sessions' | 'reports' | 'qa' | 'resources' | 'vetting';
+type MentorTab = 'circles' | 'directory' | 'attendance' | 'sessions' | 'reports' | 'qa' | 'resources' | 'vetting';
 
 export const MentorDashboardPage: React.FC = () => {
   const { user, role } = useAuth();
@@ -206,6 +208,7 @@ export const MentorDashboardPage: React.FC = () => {
 
   const tabs: { id: MentorTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'circles', label: 'Assigned Circles & Roster', icon: Users },
+    { id: 'directory', label: 'Member Directory', icon: Search },
     { id: 'attendance', label: 'Attendance Register', icon: ClipboardList },
     { id: 'sessions', label: 'Activity Planner', icon: Calendar },
     { id: 'reports', label: `Progress Reports (${progressReports.length})`, icon: FileText },
@@ -386,6 +389,9 @@ export const MentorDashboardPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* TAB 1B: SCOPED MEMBER DIRECTORY */}
+        {activeTab === 'directory' && <MemberDirectory embedded />}
 
         {/* TAB 2: ATTENDANCE REGISTER */}
         {activeTab === 'attendance' && (
